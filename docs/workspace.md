@@ -150,6 +150,11 @@ juice instance verify tokyo-weather-bot
 **コマンド列の再実行に依存しない。** `juice.yaml` と `juice.lock` を持っていけば、どの環境でも
 `juice apply` で同じ構成が再現される。
 
+> **実装メモ（C002）:** `juice lock`（`src/core/lock.py` / CLI `juice lock [-f juice.yaml] [-o juice.lock]`）は
+> 実装済み。現状の `juice.lock` は manifest の解決結果（mcp_server の `package`/`command`、instance の
+> 依存閉包）＋ `manifestDigest`（spec との drift 検出用）を**冪等に** pin する。外部パッケージの
+> `digest`（npm / OCI 等）取得は未決の論点のため欄のみ用意（値は `null`、TODO）。`juice apply`（C003）は未実装。
+
 ---
 
 ## mcp_server のビルド副作用をどう扱うか（Agentfile なし）

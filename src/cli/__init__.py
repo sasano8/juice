@@ -13,7 +13,7 @@ import sys
 
 import yaml
 
-from ..core import LAYERS, Juice, ManifestError, load_manifest
+from ..core import LAYERS, Juice, ManifestError, load_manifest, write_lock
 
 
 def _print_names(names: list[str], layer: str) -> None:
@@ -54,6 +54,12 @@ def build_parser() -> argparse.ArgumentParser:
     vp.add_argument(
         "-f", "--file", default="juice.yaml", help="manifest のパス（既定: juice.yaml）"
     )
+
+    lp = layer_subs.add_parser("lock", help="juice.yaml を解決して juice.lock を冪等生成する")
+    lp.add_argument(
+        "-f", "--file", default="juice.yaml", help="manifest のパス（既定: juice.yaml）"
+    )
+    lp.add_argument("-o", "--out", default="juice.lock", help="出力先（既定: juice.lock）")
 
     for layer in LAYERS:
         lp = layer_subs.add_parser(layer, help=f"{layer} パッケージを操作する")
@@ -203,8 +209,25 @@ def _cmd_manifest_validate(file: str) -> int:
     return 0
 
 
+def _cmd_lock(file: str, out: str) -> int:
+    """juice.yaml を解決して juice.lock を生成する（不正なら 1）。"""
+    try:
+        result = write_lock(file, out)
+    except ManifestError as e:
+        print(f"invalid manifest: {e}", file=sys.stderr)
+        return 1
+    print(f"locked: {out} ({result['manifestDigest']})")
+    for layer in ("mcp_servers", "instances"):
+        if result[layer]:
+            print(f"  {layer}: {', '.join(result[layer])}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    if args.layer == "lock":
+        return _cmd_lock(args.file, args.out)
 
     if args.layer == "manifest" and args.action == "validate":
         return _cmd_manifest_validate(args.file)

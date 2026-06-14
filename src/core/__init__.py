@@ -10,6 +10,12 @@ from __future__ import annotations
 from . import bundle as _bundle
 from .config import ALL_ORDER, LAYERS, Config
 from .factory import create_registries, create_registry, create_storage
+from .lock import (
+    Lock,
+    build_lock,
+    dump_lock,
+    write_lock,
+)
 from .manifest import (
     Manifest,
     ManifestError,
@@ -32,6 +38,10 @@ __all__ = [
     "ManifestError",
     "parse_manifest",
     "load_manifest",
+    "Lock",
+    "build_lock",
+    "dump_lock",
+    "write_lock",
     "create_registry",
     "create_registries",
     "create_storage",

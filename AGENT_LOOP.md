@@ -62,9 +62,9 @@
 このループを開始するには：
 
 ```bash
-# Claude Code で実行（手順=AGENT_LOOP.md、状態=PROJECT.md）
-claude "AGENT_LOOP.md と PROJECT.md を読んで、1 サイクル実行してください"
+claude remote-control "AGENT_LOOP.md 読んで作業して"
 
-# または継続的に
+claude "AGENT_LOOP.md 読んで作業して"
 claude "AGENT_LOOP.md のループを 1 サイクル実行してください"
+
 ```

@@ -74,6 +74,46 @@ def test_main_manifest_validate_reports_error(tmp_path, capsys: pytest.CaptureFi
     assert "invalid manifest" in capsys.readouterr().err
 
 
+_MANIFEST = """\
+apiVersion: juice/v1
+mcp_servers:
+  - name: weather
+    package: "@example/mcp-weather"
+mcp_bundled:
+  - name: weather-bot
+    tools:
+      - bind: weather
+        from: mcp_server:weather
+instances:
+  - name: tokyo-weather-bot
+    mcp_bundled: weather-bot
+"""
+
+
+def test_main_lock_writes_idempotent_file(tmp_path) -> None:
+    src = tmp_path / "juice.yaml"
+    src.write_text(_MANIFEST, encoding="utf-8")
+    out = tmp_path / "juice.lock"
+
+    rc = main(["lock", "-f", str(src), "-o", str(out)])
+    assert rc == 0
+    first = out.read_text(encoding="utf-8")
+    assert first.startswith("# juice.lock")
+
+    # 再実行してもバイト単位で同一（冪等）。
+    rc = main(["lock", "-f", str(src), "-o", str(out)])
+    assert rc == 0
+    assert out.read_text(encoding="utf-8") == first
+
+
+def test_main_lock_reports_error(tmp_path, capsys: pytest.CaptureFixture[str]) -> None:
+    src = tmp_path / "juice.yaml"
+    src.write_text("apiVersion: juice/v2\n", encoding="utf-8")
+    rc = main(["lock", "-f", str(src), "-o", str(tmp_path / "juice.lock")])
+    assert rc == 1
+    assert "invalid manifest" in capsys.readouterr().err
+
+
 def test_print_names_empty_reports_to_stderr(capsys: pytest.CaptureFixture[str]) -> None:
     _print_names([], "instance")
     captured = capsys.readouterr()
