@@ -6,6 +6,35 @@ BUNDLE_NAME ?= weather-bot
 RUN_MODE ?= api
 # docker --env-file で読み込む .env（無ければ自動スキップ）
 ENV_FILE ?= .env.agent
+# ruff は uvx で都度実行（dev 依存に入れない）
+RUFF ?= uvx ruff
+
+# ===== 開発用定形タスク（format → lint → test を再現性をもって一括実行）=====
+
+.PHONY: format
+## ruff でコードを自動整形する（import 整理 + format）
+format:
+	@$(RUFF) check --select I --fix .
+	@$(RUFF) format .
+
+.PHONY: lint
+## ruff で lint する（整形差分も検出。CI と同じ判定）
+lint:
+	@$(RUFF) check .
+	@$(RUFF) format --check .
+
+.PHONY: test
+## pytest を実行する
+test:
+	@uv run pytest
+
+.PHONY: check
+## CI と同じ静的検査一式（lint + test）。コミット前に通すこと
+check: lint test
+
+.PHONY: dev
+## 開発ループの定形: 整形してから検査一式（format → lint → test）
+dev: format lint test
 
 .PHONY: juice-all
 ## 全レイヤを依存順（instance→tool）に一覧表示する

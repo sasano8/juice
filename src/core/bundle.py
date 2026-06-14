@@ -22,7 +22,7 @@ import json
 
 import yaml
 
-from .config import ENTRY_FILES, LAYERS
+from .config import LAYERS
 from .registry import RegistryArray
 
 SPEC_FILE = "bundle.yml"
@@ -369,7 +369,7 @@ def _agent_config(registries: RegistryArray, name: str, spec: dict) -> dict:
     # args の .py は vendor/tools/<name>/ 配下へ prefix（その server が起動される）。
     mcp_servers: dict = {}
     tools = spec.get("tools") or {}
-    for tname in (list(tools.keys()) if isinstance(tools, dict) else list(tools)):
+    for tname in list(tools.keys()) if isinstance(tools, dict) else list(tools):
         tmeta, _ = parse_frontmatter(registries.read("tool", tname))
         raw_args = tmeta.get("args") or []
         args = [
@@ -425,7 +425,9 @@ def init(registries: RegistryArray, name: str, clean: bool = False) -> dict:
         registries.write("mcp_bundled", name, SPEC_FILE, spec_text)
     else:
         registries.write(
-            "mcp_bundled", name, SPEC_FILE,
+            "mcp_bundled",
+            name,
+            SPEC_FILE,
             BUNDLE_YML_TEMPLATE.format(namespace=registries.namespace, name=name),
         )
     return {"kind": "init", "mcp_bundled": name, "spec": f"mcp_bundled/{name}/{SPEC_FILE}"}
@@ -494,4 +496,11 @@ def run(
         command = f"docker run --rm -i -e {key_env} {envfile}{tag} mcp_server"
     else:
         command = f"docker run --rm -p {port}:{port} -e {key_env} {envfile}{tag} {mode}"
-    return {"kind": "run", "mcp_bundled": name, "mode": mode, "image": tag, "port": port, "command": command}
+    return {
+        "kind": "run",
+        "mcp_bundled": name,
+        "mode": mode,
+        "image": tag,
+        "port": port,
+        "command": command,
+    }

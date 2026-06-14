@@ -13,7 +13,7 @@ import sys
 
 import yaml
 
-from ..core import LAYERS, Juice
+from ..core import LAYERS, Juice, ManifestError, load_manifest
 
 
 def _print_names(names: list[str], layer: str) -> None:
@@ -48,6 +48,13 @@ def build_parser() -> argparse.ArgumentParser:
     ap_subs = ap.add_subparsers(dest="action", required=True, metavar="ACTION")
     ap_subs.add_parser("list", help="全レイヤ一覧を表示する")
 
+    mp = layer_subs.add_parser("manifest", help="宣言的 manifest（juice.yaml）を扱う")
+    mp_subs = mp.add_subparsers(dest="action", required=True, metavar="ACTION")
+    vp = mp_subs.add_parser("validate", help="juice.yaml をパースして構造・参照を検証する")
+    vp.add_argument(
+        "-f", "--file", default="juice.yaml", help="manifest のパス（既定: juice.yaml）"
+    )
+
     for layer in LAYERS:
         lp = layer_subs.add_parser(layer, help=f"{layer} パッケージを操作する")
         action_subs = lp.add_subparsers(dest="action", required=True, metavar="ACTION")
@@ -57,9 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
                 "init", help="bundle.yml の雛形を生成して成果物を初期化する"
             )
             ip.add_argument("name", help="成果物名（mcp_bundled）")
-            ip.add_argument(
-                "-n", "--namespace", default=None, help="namespace（既定: default）"
-            )
+            ip.add_argument("-n", "--namespace", default=None, help="namespace（既定: default）")
             ip.add_argument(
                 "--clean",
                 action="store_true",
@@ -71,15 +76,11 @@ def build_parser() -> argparse.ArgumentParser:
                 help="内包物を vendoring し requirements/Dockerfile/entrypoint を生成する",
             )
             bp.add_argument("name", help="成果物名（mcp_bundled）")
-            bp.add_argument(
-                "-n", "--namespace", default=None, help="namespace（既定: default）"
-            )
+            bp.add_argument("-n", "--namespace", default=None, help="namespace（既定: default）")
 
             blp = action_subs.add_parser("build", help="docker でイメージをビルドする")
             blp.add_argument("name", help="成果物名（mcp_bundled）")
-            blp.add_argument(
-                "-n", "--namespace", default=None, help="namespace（既定: default）"
-            )
+            blp.add_argument("-n", "--namespace", default=None, help="namespace（既定: default）")
             blp.add_argument(
                 "-t",
                 "--tag",
@@ -98,18 +99,14 @@ def build_parser() -> argparse.ArgumentParser:
                 choices=["api", "ui", "mcp_server"],
                 help="起動するサービス（既定: api）",
             )
-            rp.add_argument(
-                "-n", "--namespace", default=None, help="namespace（既定: default）"
-            )
+            rp.add_argument("-n", "--namespace", default=None, help="namespace（既定: default）")
             rp.add_argument(
                 "-t",
                 "--tag",
                 default=None,
                 help="イメージタグ（既定: juice/<name>:latest）",
             )
-            rp.add_argument(
-                "--build", action="store_true", help="run の前に build も実行する"
-            )
+            rp.add_argument("--build", action="store_true", help="run の前に build も実行する")
             rp.add_argument(
                 "--bundle",
                 action="store_true",
@@ -191,8 +188,26 @@ def _cmd_run(
     return _exec(juice.run(name, mode=mode, image=tag, env_file=env_file)["command"])
 
 
+def _cmd_manifest_validate(file: str) -> int:
+    """juice.yaml をパース・検証し、要約を表示する（不正なら 1）。"""
+    try:
+        manifest = load_manifest(file)
+    except ManifestError as e:
+        print(f"invalid manifest: {e}", file=sys.stderr)
+        return 1
+    print(f"ok: {file} (apiVersion={manifest.api_version}, namespace={manifest.namespace})")
+    for layer in ("mcp_servers", "subagents", "skills", "mcp_bundled", "instances"):
+        names = manifest.names(layer)
+        if names:
+            print(f"  {layer}: {', '.join(names)}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    if args.layer == "manifest" and args.action == "validate":
+        return _cmd_manifest_validate(args.file)
 
     if args.action == "list":
         juice = Juice()

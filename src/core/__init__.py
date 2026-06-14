@@ -10,6 +10,12 @@ from __future__ import annotations
 from . import bundle as _bundle
 from .config import ALL_ORDER, LAYERS, Config
 from .factory import create_registries, create_registry, create_storage
+from .manifest import (
+    Manifest,
+    ManifestError,
+    load_manifest,
+    parse_manifest,
+)
 from .registry import Registry, RegistryArray
 from .storage import LocalStorage, Storage
 
@@ -22,6 +28,10 @@ __all__ = [
     "LocalStorage",
     "LAYERS",
     "ALL_ORDER",
+    "Manifest",
+    "ManifestError",
+    "parse_manifest",
+    "load_manifest",
     "create_registry",
     "create_registries",
     "create_storage",
@@ -52,7 +62,7 @@ class Juice:
         return _bundle.init(self.registries, name, clean=clean)
 
     def bundle(self, name: str) -> dict:
-        """内包物を vendoring し、build コンテキスト（requirements/entrypoint/Dockerfile）を生成する。"""
+        """内包物を vendoring し、build コンテキスト一式を生成する。"""
         return _bundle.bundle(self.registries, name)
 
     def build(self, name: str, image: str | None = None) -> dict:

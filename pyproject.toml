@@ -10,9 +10,34 @@ dependencies = [
 [project.scripts]
 juice = "src.cli:main"
 
+[dependency-groups]
+# 開発用。ruff は uvx で実行するため含めない（Makefile 参照）。
+dev = [
+    "pytest>=8.0",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+# 生成物（vendor/）と仮想環境は対象外
+extend-exclude = ["registries/**/vendor", ".venv"]
+
+[tool.ruff.lint]
+# E,F: pyflakes/pycodestyle, I: isort, UP: pyupgrade, B: bugbear, SIM: simplify
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# bundle.py は生成コードを文字列リテラルとして埋め込むため、長い行を許容する
+# （文字列内なので noqa が置けず、整形すると生成物の出力が崩れる）。
+"src/core/bundle.py" = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

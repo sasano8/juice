@@ -1,0 +1,32 @@
+name: CI
+
+# lint + test を自動実行する。ローカルの `make check` と同じ判定を CI でも再現する。
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dev dependencies
+        run: uv sync --group dev
+
+      # ruff は Makefile と同じく uvx で実行する（lint + format --check）。
+      # test は uv 環境の pytest。`make check` と同じ内容を CI でも回す。
+      - name: Lint
+        run: make lint
+
+      - name: Test
+        run: make test

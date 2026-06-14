@@ -1,0 +1,245 @@
+"""manifest（juice.yaml）パーサのテスト。"""
+
+from __future__ import annotations
+
+import pytest
+
+from src.core import ManifestError, load_manifest, parse_manifest
+from src.core.manifest import API_VERSION
+
+# workspace.md の例に沿った完全な manifest。
+VALID = """\
+apiVersion: juice/v1
+namespace: default
+
+mcp_servers:
+  - name: weather
+    package: "@example/mcp-weather"
+    command: npx -y @example/mcp-weather
+    env: [WEATHER_API_KEY]
+    tools: [get_forecast]
+
+subagents:
+  - name: forecaster
+    model: claude-opus-4-8
+    allow_tools: [weather]
+    prompt: |
+      あなたは天気予報アシスタントです。
+
+skills:
+  - name: report-weather
+    description: 都市の天気を取得し一言で要約する
+
+mcp_bundled:
+  - name: weather-bot
+    subagent: forecaster
+    skills: [report-weather]
+    tools:
+      - bind: weather
+        from: mcp_server:weather
+        env: [WEATHER_API_KEY]
+
+instances:
+  - name: tokyo-weather-bot
+    mcp_bundled: weather-bot
+    defaults:
+      city: "Tokyo"
+    secrets:
+      WEATHER_API_KEY: env:WEATHER_API_KEY
+"""
+
+
+def test_parse_valid_full_manifest():
+    m = parse_manifest(VALID)
+    assert m.api_version == API_VERSION
+    assert m.namespace == "default"
+
+    assert m.names("mcp_servers") == ["weather"]
+    server = m.mcp_servers[0]
+    assert server.package == "@example/mcp-weather"
+    assert server.env == ["WEATHER_API_KEY"]
+    assert server.tools == ["get_forecast"]
+
+    sa = m.subagents[0]
+    assert sa.model == "claude-opus-4-8"
+    assert sa.allow_tools == ["weather"]
+    assert sa.prompt.strip().startswith("あなたは")
+
+    bundle = m.mcp_bundled[0]
+    assert bundle.subagent == "forecaster"
+    assert bundle.skills == ["report-weather"]
+    assert len(bundle.tools) == 1
+    binding = bundle.tools[0]
+    assert binding.bind == "weather"
+    assert binding.from_kind == "mcp_server"
+    assert binding.from_name == "weather"
+    assert binding.env == ["WEATHER_API_KEY"]
+
+    inst = m.instances[0]
+    assert inst.mcp_bundled == "weather-bot"
+    assert inst.defaults == {"city": "Tokyo"}
+    assert inst.secrets == {"WEATHER_API_KEY": "env:WEATHER_API_KEY"}
+
+
+def test_namespace_defaults_to_default():
+    m = parse_manifest("apiVersion: juice/v1\n")
+    assert m.namespace == "default"
+    assert m.names("mcp_servers") == []
+
+
+def test_empty_manifest_errors():
+    with pytest.raises(ManifestError, match="空です"):
+        parse_manifest("")
+
+
+def test_non_mapping_root_errors():
+    with pytest.raises(ManifestError, match="マッピング"):
+        parse_manifest("- a\n- b\n")
+
+
+def test_missing_api_version_errors():
+    with pytest.raises(ManifestError, match="apiVersion が必要"):
+        parse_manifest("namespace: default\n")
+
+
+def test_unsupported_api_version_errors():
+    with pytest.raises(ManifestError, match="未対応の apiVersion"):
+        parse_manifest("apiVersion: juice/v2\n")
+
+
+def test_layer_must_be_list():
+    with pytest.raises(ManifestError, match="リストである必要"):
+        parse_manifest("apiVersion: juice/v1\nmcp_servers:\n  name: x\n")
+
+
+def test_item_requires_name():
+    with pytest.raises(ManifestError, match="name（文字列）が必要"):
+        parse_manifest("apiVersion: juice/v1\nskills:\n  - description: no name\n")
+
+
+def test_duplicate_name_errors():
+    text = """\
+apiVersion: juice/v1
+skills:
+  - name: dup
+  - name: dup
+"""
+    with pytest.raises(ManifestError, match="重複した name"):
+        parse_manifest(text)
+
+
+def test_subagent_allow_tools_unknown_reference():
+    text = """\
+apiVersion: juice/v1
+subagents:
+  - name: forecaster
+    allow_tools: [ghost]
+"""
+    with pytest.raises(ManifestError, match="未定義の mcp_server"):
+        parse_manifest(text)
+
+
+def test_bundled_unknown_subagent_reference():
+    text = """\
+apiVersion: juice/v1
+mcp_bundled:
+  - name: bot
+    subagent: ghost
+"""
+    with pytest.raises(ManifestError, match="未定義の subagent"):
+        parse_manifest(text)
+
+
+def test_bundled_unknown_skill_reference():
+    text = """\
+apiVersion: juice/v1
+mcp_bundled:
+  - name: bot
+    skills: [ghost]
+"""
+    with pytest.raises(ManifestError, match="未定義の skill"):
+        parse_manifest(text)
+
+
+def test_bundled_tool_unknown_server_reference():
+    text = """\
+apiVersion: juice/v1
+mcp_bundled:
+  - name: bot
+    tools:
+      - bind: w
+        from: mcp_server:ghost
+"""
+    with pytest.raises(ManifestError, match="未定義の mcp_server"):
+        parse_manifest(text)
+
+
+def test_tool_binding_requires_bind():
+    text = """\
+apiVersion: juice/v1
+mcp_bundled:
+  - name: bot
+    tools:
+      - from: mcp_server:weather
+"""
+    with pytest.raises(ManifestError, match="bind"):
+        parse_manifest(text)
+
+
+def test_tool_binding_from_format():
+    text = """\
+apiVersion: juice/v1
+mcp_bundled:
+  - name: bot
+    tools:
+      - bind: w
+        from: weather
+"""
+    with pytest.raises(ManifestError, match="<kind>:<name>"):
+        parse_manifest(text)
+
+
+def test_tool_binding_unsupported_kind():
+    text = """\
+apiVersion: juice/v1
+mcp_bundled:
+  - name: bot
+    tools:
+      - bind: w
+        from: skill:weather
+"""
+    with pytest.raises(ManifestError, match="未対応"):
+        parse_manifest(text)
+
+
+def test_instance_requires_mcp_bundled():
+    text = """\
+apiVersion: juice/v1
+instances:
+  - name: inst
+"""
+    with pytest.raises(ManifestError, match="mcp_bundled（文字列）が必要"):
+        parse_manifest(text)
+
+
+def test_instance_unknown_bundled_reference():
+    text = """\
+apiVersion: juice/v1
+instances:
+  - name: inst
+    mcp_bundled: ghost
+"""
+    with pytest.raises(ManifestError, match="未定義の mcp_bundled"):
+        parse_manifest(text)
+
+
+def test_load_manifest_from_file(tmp_path):
+    p = tmp_path / "juice.yaml"
+    p.write_text(VALID, encoding="utf-8")
+    m = load_manifest(p)
+    assert m.names("instances") == ["tokyo-weather-bot"]
+
+
+def test_load_manifest_missing_file(tmp_path):
+    with pytest.raises(ManifestError, match="見つかりません"):
+        load_manifest(tmp_path / "nope.yaml")
