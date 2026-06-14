@@ -6,8 +6,9 @@ BUNDLE_NAME ?= weather-bot
 RUN_MODE ?= api
 # docker --env-file で読み込む .env（無ければ自動スキップ）
 ENV_FILE ?= .env.agent
-# ruff は uvx で都度実行（dev 依存に入れない）
-RUFF ?= uvx ruff
+# ruff は uvx で都度実行（dev 依存に入れない）。
+# 再現性のためバージョンを固定する（未固定だと uvx が毎回最新を取得し format/lint がドリフトする）。
+RUFF ?= uvx ruff@0.15.17
 
 # ===== 開発用定形タスク（format → lint → test を再現性をもって一括実行）=====
 

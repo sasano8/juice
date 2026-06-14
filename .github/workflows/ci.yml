@@ -17,8 +17,9 @@ jobs:
         with:
           enable-cache: true
 
+      # ローカルと同じ Python を使う（バージョンは .python-version が単一の正）。
       - name: Set up Python
-        run: uv python install 3.12
+        run: uv python install
 
       - name: Install dev dependencies
         run: uv sync --group dev

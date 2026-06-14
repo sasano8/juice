@@ -30,7 +30,7 @@ htmlcov/
 .nox/
 
 # Tooling
-.python-version
+# .python-version は Python 版を固定する再現性の単一の正なので追跡する（ignore しない）。
 pip-log.txt
 
 # OS / editor
