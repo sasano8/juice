@@ -6,10 +6,10 @@
   "api_key_file": null,
   "system": "あなたは天気予報アシスタントです。簡潔で親切に、要点だけを伝えてください。",
   "mcp_servers": {
-    "tools": {
+    "weather": {
       "command": "python",
       "args": [
-        "mock_server.py"
+        "tools/weather/server.py"
       ],
       "transport": "stdio"
     }

@@ -29,6 +29,10 @@ class Registry:
         """このロケーション配下 `name/entry` が存在するか。"""
         return self.storage.exists(f"{self.config.path}/{name}/{entry}")
 
+    def list_files(self, name: str) -> list[str]:
+        """パッケージ `name` 配下のファイルを再帰列挙（name からの相対パス）。"""
+        return self.storage.list_files(f"{self.config.path}/{name}")
+
     def write(self, name: str, entry: str, text: str) -> None:
         """このロケーション配下 `name/entry` にテキストを書く。"""
         self.storage.write_text(f"{self.config.path}/{name}/{entry}", text)
@@ -69,6 +73,10 @@ class RegistryArray:
     def exists(self, layer: str, name: str, entry: str | None = None) -> bool:
         """指定レイヤのパッケージ `name` のファイルが存在するか（既定はエントリファイル）。"""
         return self._registries[layer].exists(name, entry or ENTRY_FILES[layer])
+
+    def list_files(self, layer: str, name: str) -> list[str]:
+        """指定レイヤのパッケージ `name` 配下のファイルを再帰列挙する。"""
+        return self._registries[layer].list_files(name)
 
     def write(self, layer: str, name: str, entry: str, text: str) -> None:
         """指定レイヤのパッケージ `name` 配下 `entry` にテキストを書く。"""

@@ -27,6 +27,10 @@ class Storage(ABC):
         """`path` のテキストを読む。"""
 
     @abstractmethod
+    def list_files(self, path: str) -> list[str]:
+        """`path` 配下のファイルを再帰列挙し、`path` からの相対パスを名前順で返す。"""
+
+    @abstractmethod
     def write_text(self, path: str, text: str) -> None:
         """`path` にテキストを書く（親ディレクトリは必要なら作成）。"""
 
@@ -55,6 +59,12 @@ class LocalStorage(Storage):
 
     def read_text(self, path: str) -> str:
         return self._resolve(path).read_text(encoding="utf-8")
+
+    def list_files(self, path: str) -> list[str]:
+        base = self._resolve(path)
+        if not base.is_dir():
+            return []
+        return sorted(p.relative_to(base).as_posix() for p in base.rglob("*") if p.is_file())
 
     def write_text(self, path: str, text: str) -> None:
         target = self._resolve(path)

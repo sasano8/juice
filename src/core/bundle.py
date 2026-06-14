@@ -281,30 +281,6 @@ async def chat_completions(body: dict):
     }
 '''
 
-MOCK_SERVER_PY = '''\
-"""モック MCP server（自動生成・FastMCP）。
-
-get_forecast(city) を MCP の tool として stdio で公開する。実 server に差し替えるまでの
-tool バックエンド。langchain-mcp-adapters はこれを stdio で起動して tool を取り込む。
-"""
-
-from __future__ import annotations
-
-from mcp.server.fastmcp import FastMCP
-
-mcp = FastMCP("mock-weather")
-
-
-@mcp.tool()
-def get_forecast(city: str) -> str:
-    """指定都市の天気予報を返す（モック）。"""
-    return f"{city}: 晴れ 80C（モック予報）"
-
-
-if __name__ == "__main__":
-    mcp.run()  # stdio transport
-'''
-
 ENTRYPOINT_PY = '''\
 """エントリポイント（自動生成）。mode に応じてサービスを起動する。
 
@@ -330,7 +306,17 @@ def main() -> int:
     if MODE == "ui":
         os.execvp("langgraph", ["langgraph", "dev", "--host", "0.0.0.0", "--port", PORT, "--no-browser"])
     if MODE == "mcp_server":
-        os.execvp(sys.executable, [sys.executable, "mock_server.py"])
+        import json
+        import pathlib
+
+        here = pathlib.Path(__file__).parent
+        servers = (json.loads((here / "agent.json").read_text(encoding="utf-8")).get("mcp_servers") or {})
+        if not servers:
+            print("no mcp_servers in agent.json", file=sys.stderr)
+            return 2
+        srv = next(iter(servers.values()))  # 先頭 tool の server を起動
+        args = [str(here / a) if isinstance(a, str) and a.endswith(".py") else a for a in srv.get("args", [])]
+        os.execvp(srv["command"], [srv["command"], *args])
     print(f"unknown mode: {MODE} (use api / ui / mcp_server)", file=sys.stderr)
     return 2
 
@@ -379,6 +365,22 @@ def _agent_config(registries: RegistryArray, name: str, spec: dict) -> dict:
         system = body.strip()
         if not (spec.get("llm") or {}).get("model"):
             model = meta.get("model") or model
+    # 各 tool パッケージ（tools/<name>/index.md）から MCP server 起動定義を構築。
+    # args の .py は vendor/tools/<name>/ 配下へ prefix（その server が起動される）。
+    mcp_servers: dict = {}
+    tools = spec.get("tools") or {}
+    for tname in (list(tools.keys()) if isinstance(tools, dict) else list(tools)):
+        tmeta, _ = parse_frontmatter(registries.read("tool", tname))
+        raw_args = tmeta.get("args") or []
+        args = [
+            f"{LAYERS['tool']}/{tname}/{a}" if isinstance(a, str) and a.endswith(".py") else a
+            for a in raw_args
+        ]
+        mcp_servers[tname] = {
+            "command": tmeta.get("command", "python"),
+            "args": args,
+            "transport": "stdio",
+        }
     return {
         "name": name,
         "provider": llm.get("provider", "anthropic"),
@@ -386,23 +388,22 @@ def _agent_config(registries: RegistryArray, name: str, spec: dict) -> dict:
         "api_key_env": llm.get("api_key_env"),
         "api_key_file": llm.get("api_key_file"),
         "system": system,
-        # 当面は同梱モック MCP server に集約（実 server へ差し替え可）
-        "mcp_servers": {
-            "tools": {"command": "python", "args": ["mock_server.py"], "transport": "stdio"}
-        },
+        "mcp_servers": mcp_servers,
     }
 
 
 def _vendor(registries: RegistryArray, name: str) -> list[str]:
+    """内包物を **パッケージ丸ごと**（index.md だけでなく server.py 等も）vendoring する。"""
     spec = _spec(registries, name)
     include = spec.get("include") or DEFAULT_INCLUDE
     registries.remove("mcp_bundled", name, VENDOR_DIR)
     vendored: list[str] = []
     for layer, dep in _deps(spec, include):
-        raw = registries.read(layer, dep)
-        rel = f"{VENDOR_DIR}/{LAYERS[layer]}/{dep}/{ENTRY_FILES[layer]}"
-        registries.write("mcp_bundled", name, rel, raw)
-        vendored.append(f"mcp_bundled/{name}/{rel}")
+        for rel in registries.list_files(layer, dep):  # パッケージ配下の全ファイル
+            raw = registries.read(layer, dep, rel)
+            out = f"{VENDOR_DIR}/{LAYERS[layer]}/{dep}/{rel}"
+            registries.write("mcp_bundled", name, out, raw)
+            vendored.append(f"mcp_bundled/{name}/{out}")
     return vendored
 
 
@@ -441,7 +442,6 @@ def bundle(registries: RegistryArray, name: str) -> dict:
         ("requirements.txt", REQUIREMENTS_TXT),
         ("graph.py", GRAPH_PY),
         ("api.py", API_PY),
-        ("mock_server.py", MOCK_SERVER_PY),
         ("entrypoint.py", ENTRYPOINT_PY),
         ("langgraph.json", LANGGRAPH_JSON),
         (".env", ENV_FILE),

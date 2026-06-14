@@ -22,7 +22,17 @@ def main() -> int:
     if MODE == "ui":
         os.execvp("langgraph", ["langgraph", "dev", "--host", "0.0.0.0", "--port", PORT, "--no-browser"])
     if MODE == "mcp_server":
-        os.execvp(sys.executable, [sys.executable, "mock_server.py"])
+        import json
+        import pathlib
+
+        here = pathlib.Path(__file__).parent
+        servers = (json.loads((here / "agent.json").read_text(encoding="utf-8")).get("mcp_servers") or {})
+        if not servers:
+            print("no mcp_servers in agent.json", file=sys.stderr)
+            return 2
+        srv = next(iter(servers.values()))  # 先頭 tool の server を起動
+        args = [str(here / a) if isinstance(a, str) and a.endswith(".py") else a for a in srv.get("args", [])]
+        os.execvp(srv["command"], [srv["command"], *args])
     print(f"unknown mode: {MODE} (use api / ui / mcp_server)", file=sys.stderr)
     return 2
 
