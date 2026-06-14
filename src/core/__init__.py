@@ -47,10 +47,18 @@ class Juice:
         """全レイヤを依存順（ALL_ORDER）に並べた {レイヤ: 名前リスト} を返す。"""
         return self.registries.list_all()
 
-    def bundle(self, name: str, spec_text: str) -> dict:
-        """フル実行: クリーンアップ → bundle.yml 再配置 → build（vendoring）。"""
-        return _bundle.bundle(self.registries, name, spec_text)
+    def init(self, name: str, clean: bool = False) -> dict:
+        """宣言ファイル bundle.yml の雛形を生成し、生成物をクリーンする（既存なら要 clean）。"""
+        return _bundle.init(self.registries, name, clean=clean)
 
-    def build(self, name: str) -> dict:
-        """登録済み bundle 宣言を参照して `name` を最新化（再 vendoring）する。"""
-        return _bundle.build(self.registries, name)
+    def bundle(self, name: str) -> dict:
+        """内包物を vendoring し、build コンテキスト（requirements/entrypoint/Dockerfile）を生成する。"""
+        return _bundle.bundle(self.registries, name)
+
+    def build(self, name: str, image: str | None = None) -> dict:
+        """docker イメージビルドコマンドを生成して返す（実行はしない）。"""
+        return _bundle.build(self.registries, name, image)
+
+    def run(self, name: str, image: str | None = None) -> dict:
+        """docker run コマンド（mcp_server を stdio 起動）を生成して返す。"""
+        return _bundle.run(self.registries, name, image)

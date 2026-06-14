@@ -28,7 +28,7 @@ ENTRY_FILES: dict[str, str] = {
     "tool": "index.md",
     "skill": "SKILL.md",
     "subagent": "index.md",
-    "mcp_bundled": "index.md",
+    "mcp_bundled": "bundle.yml",  # 定義 + ビルド宣言（純 YAML）
     "workflow": "index.md",
     "instance": "index.yml",
 }
