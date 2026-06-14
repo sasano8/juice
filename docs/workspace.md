@@ -167,8 +167,12 @@ juice instance verify tokyo-weather-bot
 >
 > **実装メモ（C004）:** SemVer の足場を導入（`src/core/semver.py`: `parse_version` / 比較 / `satisfies`、
 > 外部依存なし）。manifest の各パッケージ Spec に任意 `version`（SemVer）を追加し、不正なら `ManifestError`。
-> lock は mcp_server の `version` を記録し、`manifestDigest` にも反映する。`from: name@<制約>` のバージョン
-> 制約参照と依存解決（範囲マッチ・複数版共存）は次タスク（C006 以降）に切り出し。
+> lock は mcp_server の `version` を記録し、`manifestDigest` にも反映する。
+>
+> **実装メモ（C006）:** tool 束縛の `from` に version 制約を書けるようにした（`from: mcp_server:weather@>=1.0.0`）。
+> validate 時に参照先 mcp_server の宣言 `version` が制約（`satisfies`）を満たすか確認し、不充足・version
+> 未宣言・制約不正は `ManifestError`。`@` 無しは従来どおり（後方互換）。範囲マッチや複数版共存の本格的な
+> 依存解決はまだ作らない（単一 manifest 内の制約充足チェックに留める）。
 
 ---
 

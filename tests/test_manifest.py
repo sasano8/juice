@@ -259,6 +259,54 @@ mcp_servers:
         parse_manifest(text)
 
 
+def _bundle_with_from(from_ref: str, server_version: str | None = None) -> str:
+    ver = f"\n    version: {server_version}" if server_version else ""
+    return f"""\
+apiVersion: juice/v1
+mcp_servers:
+  - name: weather{ver}
+mcp_bundled:
+  - name: bot
+    tools:
+      - bind: w
+        from: {from_ref}
+"""
+
+
+def test_constraint_satisfied():
+    m = parse_manifest(_bundle_with_from("mcp_server:weather@>=1.0.0", "1.2.0"))
+    binding = m.mcp_bundled[0].tools[0]
+    assert binding.from_name == "weather"
+    assert binding.constraint == ">=1.0.0"
+
+
+def test_constraint_without_at_is_backward_compatible():
+    m = parse_manifest(_bundle_with_from("mcp_server:weather"))
+    binding = m.mcp_bundled[0].tools[0]
+    assert binding.from_name == "weather"
+    assert binding.constraint is None
+
+
+def test_constraint_unsatisfied_errors():
+    with pytest.raises(ManifestError, match="満たしません"):
+        parse_manifest(_bundle_with_from("mcp_server:weather@>=2.0.0", "1.2.0"))
+
+
+def test_constraint_without_declared_version_errors():
+    with pytest.raises(ManifestError, match="version が宣言されていません"):
+        parse_manifest(_bundle_with_from("mcp_server:weather@>=1.0.0"))
+
+
+def test_constraint_empty_errors():
+    with pytest.raises(ManifestError, match="version 制約がありません"):
+        parse_manifest(_bundle_with_from("mcp_server:weather@", "1.0.0"))
+
+
+def test_constraint_invalid_errors():
+    with pytest.raises(ManifestError, match="制約が不正"):
+        parse_manifest(_bundle_with_from("mcp_server:weather@>=bad", "1.0.0"))
+
+
 def test_load_manifest_from_file(tmp_path):
     p = tmp_path / "juice.yaml"
     p.write_text(VALID, encoding="utf-8")

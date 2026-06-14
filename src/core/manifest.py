@@ -17,7 +17,7 @@ from pathlib import Path
 
 import yaml
 
-from .semver import SemverError, parse_version
+from .semver import SemverError, parse_version, satisfies
 
 # このパーサが解釈する manifest のスキーマ版。
 API_VERSION = "juice/v1"
@@ -71,6 +71,7 @@ class ToolBinding:
     from_kind: str  # 取り込み元の型（現状は "mcp_server"）
     from_name: str  # 取り込み元リソース名
     env: list[str] = field(default_factory=list)  # 値は書かず env 名の参照のみ
+    constraint: str | None = None  # 任意の version 制約（例: ">=1.0.0"）。`@` 無しなら None
 
 
 @dataclass
@@ -227,19 +228,24 @@ def _parse_tool_binding(item: dict, owner: str) -> ToolBinding:
         raise ManifestError(
             f"{where} '{bind}' の from は '<kind>:<name>' 形式が必要です（got {src}）"
         )
-    kind, _, from_name = src.partition(":")
+    kind, _, ref = src.partition(":")
     if kind not in SUPPORTED_BIND_KINDS:
         raise ManifestError(
             f"{where} '{bind}' の from kind '{kind}' は未対応です"
             f"（対応: {', '.join(SUPPORTED_BIND_KINDS)}）"
         )
+    # `<name>@<制約>` を分解する（`@` 無しなら制約なし）。
+    from_name, sep, constraint = ref.partition("@")
     if not from_name:
         raise ManifestError(f"{where} '{bind}' の from にリソース名がありません（got {src}）")
+    if sep and not constraint.strip():
+        raise ManifestError(f"{where} '{bind}' の from に version 制約がありません（got {src}）")
     return ToolBinding(
         bind=bind,
         from_kind=kind,
         from_name=from_name,
         env=_str_list(item, "env", "mcp_bundled", f"{owner}.tools.{bind}"),
+        constraint=constraint.strip() if sep else None,
     )
 
 
@@ -268,6 +274,7 @@ def _validate(m: Manifest) -> None:
     subagents = set(m.names("subagents"))
     skills = set(m.names("skills"))
     bundles = set(m.names("mcp_bundled"))
+    server_versions = {s.name: s.version for s in m.mcp_servers}
 
     for sa in m.subagents:
         for tool in sa.allow_tools:
@@ -288,12 +295,33 @@ def _validate(m: Manifest) -> None:
                     f"mcp_bundled '{b.name}' の tool '{t.bind}': "
                     f"未定義の mcp_server を参照: {t.from_name}"
                 )
+            if t.constraint is not None:
+                _check_constraint(b, t, server_versions[t.from_name])
 
     for inst in m.instances:
         if inst.mcp_bundled not in bundles:
             raise ManifestError(
                 f"instance '{inst.name}': 未定義の mcp_bundled を参照: {inst.mcp_bundled}"
             )
+
+
+def _check_constraint(b: McpBundledSpec, t: ToolBinding, server_version: str | None) -> None:
+    """tool 束縛の version 制約を、参照先 mcp_server の宣言 version と照合する。"""
+    where = f"mcp_bundled '{b.name}' の tool '{t.bind}'"
+    if server_version is None:
+        raise ManifestError(
+            f"{where}: version 制約 '{t.constraint}' があるが "
+            f"mcp_server '{t.from_name}' に version が宣言されていません"
+        )
+    try:
+        ok = satisfies(server_version, t.constraint)
+    except SemverError as e:
+        raise ManifestError(f"{where}: version 制約が不正です: {e}") from e
+    if not ok:
+        raise ManifestError(
+            f"{where}: mcp_server '{t.from_name}' の version {server_version} が "
+            f"制約 '{t.constraint}' を満たしません"
+        )
 
 
 def _check_unique(names: list[str], layer: str) -> None:
