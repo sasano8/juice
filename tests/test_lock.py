@@ -116,6 +116,33 @@ instances:
     assert inst.mcp_servers == ["weather"]  # 重複は出現順を保って 1 つに
 
 
+def test_lock_records_server_version():
+    text = """\
+apiVersion: juice/v1
+mcp_servers:
+  - name: weather
+    package: "@example/mcp-weather"
+    version: 2.1.0
+"""
+    lock = build_lock(parse_manifest(text))
+    assert lock.mcp_servers[0].version == "2.1.0"
+    d = lock_to_dict(lock)
+    assert d["mcp_servers"][0]["version"] == "2.1.0"
+
+
+def test_digest_changes_with_version():
+    base = """\
+apiVersion: juice/v1
+mcp_servers:
+  - name: weather
+    version: 1.0.0
+"""
+    bumped = base.replace("1.0.0", "1.0.1")
+    assert build_lock(parse_manifest(base)).manifest_digest != (
+        build_lock(parse_manifest(bumped)).manifest_digest
+    )
+
+
 def test_invalid_manifest_propagates():
     from src.core import ManifestError
 

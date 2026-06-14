@@ -164,6 +164,11 @@ juice instance verify tokyo-weather-bot
 > dry-run 昇格。差分のみ表示）を追加し、`juice apply` は `juice.lock` があれば `manifestDigest` を照合して
 > **drift を検出**する（既定は警告、`--frozen` でエラー、`--require-lock` で lock 不在をエラー）。
 > 整合状態は `lock_status(manifest, lock_path)` で取得できる。
+>
+> **実装メモ（C004）:** SemVer の足場を導入（`src/core/semver.py`: `parse_version` / 比較 / `satisfies`、
+> 外部依存なし）。manifest の各パッケージ Spec に任意 `version`（SemVer）を追加し、不正なら `ManifestError`。
+> lock は mcp_server の `version` を記録し、`manifestDigest` にも反映する。`from: name@<制約>` のバージョン
+> 制約参照と依存解決（範囲マッチ・複数版共存）は次タスク（C006 以降）に切り出し。
 
 ---
 

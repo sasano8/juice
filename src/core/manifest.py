@@ -17,6 +17,8 @@ from pathlib import Path
 
 import yaml
 
+from .semver import SemverError, parse_version
+
 # このパーサが解釈する manifest のスキーマ版。
 API_VERSION = "juice/v1"
 DEFAULT_NAMESPACE = "default"
@@ -38,6 +40,7 @@ class McpServerSpec:
     command: str | None = None
     env: list[str] = field(default_factory=list)
     tools: list[str] = field(default_factory=list)
+    version: str | None = None  # 任意。SemVer（不正なら parse 時に弾く）
 
 
 @dataclass
@@ -48,6 +51,7 @@ class SubagentSpec:
     model: str | None = None
     allow_tools: list[str] = field(default_factory=list)
     prompt: str | None = None
+    version: str | None = None
 
 
 @dataclass
@@ -56,6 +60,7 @@ class SkillSpec:
 
     name: str
     description: str | None = None
+    version: str | None = None
 
 
 @dataclass
@@ -76,6 +81,7 @@ class McpBundledSpec:
     subagent: str | None = None
     skills: list[str] = field(default_factory=list)
     tools: list[ToolBinding] = field(default_factory=list)
+    version: str | None = None
 
 
 @dataclass
@@ -170,6 +176,7 @@ def _parse_mcp_server(item: dict) -> McpServerSpec:
         command=_opt_str(item, "command", "mcp_servers", name),
         env=_str_list(item, "env", "mcp_servers", name),
         tools=_str_list(item, "tools", "mcp_servers", name),
+        version=_opt_version(item, "mcp_servers", name),
     )
 
 
@@ -180,12 +187,17 @@ def _parse_subagent(item: dict) -> SubagentSpec:
         model=_opt_str(item, "model", "subagents", name),
         allow_tools=_str_list(item, "allow_tools", "subagents", name),
         prompt=_opt_str(item, "prompt", "subagents", name),
+        version=_opt_version(item, "subagents", name),
     )
 
 
 def _parse_skill(item: dict) -> SkillSpec:
     name = _require_name(item, "skills")
-    return SkillSpec(name=name, description=_opt_str(item, "description", "skills", name))
+    return SkillSpec(
+        name=name,
+        description=_opt_str(item, "description", "skills", name),
+        version=_opt_version(item, "skills", name),
+    )
 
 
 def _parse_mcp_bundled(item: dict) -> McpBundledSpec:
@@ -197,6 +209,7 @@ def _parse_mcp_bundled(item: dict) -> McpBundledSpec:
         tools=[
             _parse_tool_binding(t, name) for t in _sub_items(item, "tools", "mcp_bundled", name)
         ],
+        version=_opt_version(item, "mcp_bundled", name),
     )
 
 
@@ -323,6 +336,22 @@ def _require_name(item: dict, layer: str) -> str:
     if not name or not isinstance(name, str):
         raise ManifestError(f"{layer} の各要素に name（文字列）が必要です")
     return name
+
+
+def _opt_version(item: dict, layer: str, name: str) -> str | None:
+    """任意の `version` を取り出し、SemVer として妥当か検証する（不正なら ManifestError）。
+
+    YAML は `1.2` 等を float に解釈するため、文字列以外も含めて SemVer 検証に委ねる
+    （非文字列はそもそも妥当な SemVer ではないので不正として弾かれる）。
+    """
+    value = item.get("version")
+    if value is None:
+        return None
+    try:
+        parse_version(value)
+    except SemverError as e:
+        raise ManifestError(f"{layer} '{name}' の version が不正です: {e}") from e
+    return value
 
 
 def _opt_str(item: dict, key: str, layer: str, name: str) -> str | None:

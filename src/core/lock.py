@@ -46,6 +46,7 @@ class LockedServer:
     name: str
     package: str | None
     command: str | None
+    version: str | None = None  # 宣言された SemVer（C004）。未指定なら None
     digest: str | None = None  # TODO: npm / OCI 等から取得して pin する
 
 
@@ -89,7 +90,7 @@ def manifest_digest(manifest: Manifest) -> str:
 def build_lock(manifest: Manifest) -> Lock:
     """Manifest を解決して Lock を構築する（純関数・冪等）。"""
     servers = [
-        LockedServer(name=s.name, package=s.package, command=s.command)
+        LockedServer(name=s.name, package=s.package, command=s.command, version=s.version)
         for s in manifest.mcp_servers
     ]
 
@@ -133,6 +134,7 @@ def lock_to_dict(lock: Lock) -> dict:
                 "name": s.name,
                 "package": s.package,
                 "command": s.command,
+                "version": s.version,
                 "digest": s.digest,
             }
             for s in lock.mcp_servers

@@ -26,6 +26,7 @@ from .manifest import (
     parse_manifest,
 )
 from .registry import Registry, RegistryArray
+from .semver import SemverError, Version, is_valid, parse_version, satisfies
 from .storage import LocalStorage, Storage
 
 __all__ = [
@@ -48,6 +49,11 @@ __all__ = [
     "write_lock",
     "lock_status",
     "apply_manifest",
+    "Version",
+    "SemverError",
+    "parse_version",
+    "is_valid",
+    "satisfies",
     "create_registry",
     "create_registries",
     "create_storage",

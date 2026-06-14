@@ -233,6 +233,32 @@ instances:
         parse_manifest(text)
 
 
+def test_version_field_is_parsed():
+    text = """\
+apiVersion: juice/v1
+mcp_servers:
+  - name: weather
+    version: 1.2.3
+skills:
+  - name: report-weather
+    version: 0.1.0-rc.1
+"""
+    m = parse_manifest(text)
+    assert m.mcp_servers[0].version == "1.2.3"
+    assert m.skills[0].version == "0.1.0-rc.1"
+
+
+def test_invalid_version_errors():
+    text = """\
+apiVersion: juice/v1
+mcp_servers:
+  - name: weather
+    version: 1.2
+"""
+    with pytest.raises(ManifestError, match="version が不正"):
+        parse_manifest(text)
+
+
 def test_load_manifest_from_file(tmp_path):
     p = tmp_path / "juice.yaml"
     p.write_text(VALID, encoding="utf-8")
