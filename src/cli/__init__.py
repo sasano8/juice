@@ -11,25 +11,27 @@ from __future__ import annotations
 import argparse
 import sys
 
-from ..config import ALL_ORDER, LAYERS, Config
-from ..factory import create_registry
+from ..core import LAYERS, Juice
 
 
-def _cmd_list(registry, layer: str) -> int:
-    names = registry.list(layer)
+def _print_names(names: list[str], layer: str) -> None:
     if not names:
         print(f"(no {layer}s)", file=sys.stderr)
-        return 0
+        return
     for name in names:
         print(name)
+
+
+def _cmd_list(juice: Juice, layer: str) -> int:
+    _print_names(juice.list(layer), layer)
     return 0
 
 
-def _cmd_all(registry) -> int:
+def _cmd_all(juice: Juice) -> int:
     """全レイヤを依存順（ALL_ORDER）に一覧表示する。"""
-    for layer in ALL_ORDER:
+    for layer, names in juice.list_all().items():
         print(f"== {LAYERS[layer]} ==")
-        _cmd_list(registry, layer)
+        _print_names(names, layer)
         print()
     return 0
 
@@ -52,12 +54,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    registry = create_registry(Config())
+    juice = Juice()
 
     if args.action == "list":
         if args.layer == "all":
-            return _cmd_all(registry)
-        return _cmd_list(registry, args.layer)
+            return _cmd_all(juice)
+        return _cmd_list(juice, args.layer)
 
     print(f"unknown action: {args.action}", file=sys.stderr)
     return 1
