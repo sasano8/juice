@@ -114,6 +114,22 @@ def test_main_lock_reports_error(tmp_path, capsys: pytest.CaptureFixture[str]) -
     assert "invalid manifest" in capsys.readouterr().err
 
 
+def test_parser_apply_flags() -> None:
+    args = build_parser().parse_args(["apply", "-f", "juice.yaml", "--dry-run", "--no-prune"])
+    assert args.layer == "apply"
+    assert args.dry_run is True
+    assert args.prune is False
+
+
+def test_main_apply_reports_error(tmp_path, capsys: pytest.CaptureFixture[str]) -> None:
+    # 不正な manifest は registries に触れる前に弾かれる（実レジストリ非依存）。
+    src = tmp_path / "juice.yaml"
+    src.write_text("apiVersion: juice/v2\n", encoding="utf-8")
+    rc = main(["apply", "-f", str(src)])
+    assert rc == 1
+    assert "invalid manifest" in capsys.readouterr().err
+
+
 def test_print_names_empty_reports_to_stderr(capsys: pytest.CaptureFixture[str]) -> None:
     _print_names([], "instance")
     captured = capsys.readouterr()

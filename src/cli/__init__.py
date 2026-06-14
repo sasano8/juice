@@ -61,6 +61,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     lp.add_argument("-o", "--out", default="juice.lock", help="出力先（既定: juice.lock）")
 
+    apl = layer_subs.add_parser(
+        "apply", help="juice.yaml の desired state を registries へ冪等反映する"
+    )
+    apl.add_argument(
+        "-f", "--file", default="juice.yaml", help="manifest のパス（既定: juice.yaml）"
+    )
+    apl.add_argument("-n", "--namespace", default=None, help="namespace（既定: default）")
+    apl.add_argument(
+        "--no-prune",
+        dest="prune",
+        action="store_false",
+        help="宣言にない既存リソースを削除しない（既定は prune する）",
+    )
+    apl.add_argument("--dry-run", action="store_true", help="書き込まず、行われる変更だけ表示する")
+
     for layer in LAYERS:
         lp = layer_subs.add_parser(layer, help=f"{layer} パッケージを操作する")
         action_subs = lp.add_subparsers(dest="action", required=True, metavar="ACTION")
@@ -223,11 +238,33 @@ def _cmd_lock(file: str, out: str) -> int:
     return 0
 
 
+def _cmd_apply(file: str, namespace: str | None, prune: bool, dry_run: bool) -> int:
+    """juice.yaml を registries へ反映する（不正なら 1）。"""
+    try:
+        result = Juice(namespace=namespace).apply(file, prune=prune, dry_run=dry_run)
+    except ManifestError as e:
+        print(f"invalid manifest: {e}", file=sys.stderr)
+        return 1
+    tag = "(dry-run) " if dry_run else ""
+    print(
+        f"{tag}applied to namespace={result['namespace']}: "
+        f"{len(result['written'])} written, {len(result['pruned'])} pruned"
+    )
+    for ref in result["written"]:
+        print(f"  + {ref}")
+    for ref in result["pruned"]:
+        print(f"  - {ref}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     if args.layer == "lock":
         return _cmd_lock(args.file, args.out)
+
+    if args.layer == "apply":
+        return _cmd_apply(args.file, args.namespace, args.prune, args.dry_run)
 
     if args.layer == "manifest" and args.action == "validate":
         return _cmd_manifest_validate(args.file)
