@@ -1,0 +1,7 @@
+kind: instance
+name: tokyo-weather-bot
+actor: weather-bot
+status: stopped
+env:
+  # 実 secret はここに直書きしない（env 名の参照にとどめる）
+  WEATHER_API_KEY: ${WEATHER_API_KEY}

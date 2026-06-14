@@ -1,0 +1,12 @@
+---
+kind: workflow
+name: morning-brief
+schedule: "0 7 * * *"
+steps:
+  - actor: weather-bot
+    input: { city: "Tokyo" }
+---
+
+# morning-brief
+
+毎朝 7 時に `weather-bot` を起動し、東京の天気を要約させる。
