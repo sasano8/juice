@@ -1,4 +1,11 @@
-# app_mcp_manager
+> ⚠️ **SUPERSEDED（旧設計）。** これは初期の設計メモ（5 層モデル: tool/skill/subagent/actor/
+> workflow、`actor`/`instance` 中心）で、現行とは用語・構成が異なります。`actor` は **`mcp_bundled`**
+> に統一され、起動は **LangGraph（api/ui/mcp_server）** です。現行は [architecture.md](architecture.md)
+> （概念）と [build.md](build.md)（手順）を参照。本ファイルは経緯の記録として残しています。
+
+---
+
+# app_mcp_manager（旧設計メモ）
 
 AI エージェントのための「パッケージマネージャー」。
 

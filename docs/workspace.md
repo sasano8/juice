@@ -1,4 +1,12 @@
-# workspace：宣言的ワークスペース（仮）
+> ⚠️ **SUPERSEDED（旧・未実装の設計案）。** ここで描いた宣言的ワークスペース
+> （`juice.yaml` + `lock` + `apply` + `instance`/`workflow`）は**実装されていません**。
+> 現行の実装は **`bundle.yml`（mcp_bundled 定義）→ `init/bundle/build/run`** です
+> （[build.md](build.md) / [architecture.md](architecture.md) を参照）。本ファイルは将来検討用の
+> 歴史的メモとして残しています。
+
+---
+
+# workspace：宣言的ワークスペース（仮・未実装）
 
 > ⚠️ **仮（draft）。** コマンド・スキーマは叩き台。現状実装済みは `juice <layer> list` /
 > `juice all list` のみ。
