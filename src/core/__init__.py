@@ -13,8 +13,10 @@ from .config import ALL_ORDER, LAYERS, Config
 from .factory import create_registries, create_registry, create_storage
 from .lock import (
     Lock,
+    LockError,
     build_lock,
     dump_lock,
+    lock_status,
     write_lock,
 )
 from .manifest import (
@@ -40,9 +42,11 @@ __all__ = [
     "parse_manifest",
     "load_manifest",
     "Lock",
+    "LockError",
     "build_lock",
     "dump_lock",
     "write_lock",
+    "lock_status",
     "apply_manifest",
     "create_registry",
     "create_registries",
@@ -69,10 +73,64 @@ class Juice:
         """全レイヤを依存順（ALL_ORDER）に並べた {レイヤ: 名前リスト} を返す。"""
         return self.registries.list_all()
 
-    def apply(self, manifest_path: str, prune: bool = True, dry_run: bool = False) -> dict:
-        """juice.yaml を読み、registries へ desired state を冪等反映する（C003）。"""
+    def apply(
+        self,
+        manifest_path: str,
+        prune: bool = True,
+        dry_run: bool = False,
+        lock_path: str = "juice.lock",
+        frozen: bool = False,
+        require_lock: bool = False,
+    ) -> dict:
+        """juice.yaml を registries へ冪等反映する（C003）。
+
+        juice.lock があれば manifest との drift を照合する（C005）: drift は既定で警告（結果の
+        `warning`）、`frozen=True` ならエラー。`require_lock=True` で lock 不在をエラーにする。
+        """
         manifest = load_manifest(manifest_path)
-        return apply_manifest(self.registries, manifest, prune=prune, dry_run=dry_run)
+        warning = self._lock_guard(manifest, lock_path, frozen, require_lock)
+        result = apply_manifest(self.registries, manifest, prune=prune, dry_run=dry_run)
+        if warning:
+            result["warning"] = warning
+        return result
+
+    def plan(
+        self,
+        manifest_path: str,
+        prune: bool = True,
+        lock_path: str = "juice.lock",
+        frozen: bool = False,
+        require_lock: bool = False,
+    ) -> dict:
+        """apply を書き込まず実行し、行われる変更（差分）を返す（C005）。"""
+        return self.apply(
+            manifest_path,
+            prune=prune,
+            dry_run=True,
+            lock_path=lock_path,
+            frozen=frozen,
+            require_lock=require_lock,
+        )
+
+    def _lock_guard(self, manifest, lock_path: str, frozen: bool, require_lock: bool) -> str | None:
+        """manifest と juice.lock の整合を確認する。drift 警告文を返す（無ければ None）。"""
+        status = lock_status(manifest, lock_path)
+        if not status["present"]:
+            if require_lock:
+                raise LockError(
+                    f"juice.lock がありません（--require-lock）。"
+                    f"`juice lock` を実行してください: {lock_path}"
+                )
+            return None
+        if status["drift"]:
+            msg = (
+                f"juice.lock が manifest と一致しません（drift）。"
+                f"`juice lock` で更新してください: {lock_path}"
+            )
+            if frozen:
+                raise LockError(msg)
+            return msg
+        return None
 
     def init(self, name: str, clean: bool = False) -> dict:
         """宣言ファイル bundle.yml の雛形を生成し、生成物をクリーンする（既存なら要 clean）。"""

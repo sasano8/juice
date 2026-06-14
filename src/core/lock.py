@@ -21,6 +21,7 @@ import dataclasses
 import hashlib
 import json
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import yaml
 
@@ -28,6 +29,11 @@ from .manifest import Manifest, load_manifest
 
 # juice.lock のフォーマット版。スキーマを変えたら上げる。
 LOCK_VERSION = 1
+
+
+class LockError(Exception):
+    """lock の要求（--frozen / --require-lock）に反したときに投げる。"""
+
 
 # 生成物であることを示すヘッダ（手編集を抑止）。
 _LOCK_HEADER = "# juice.lock — 生成物。手で編集しない（`juice lock` で再生成する）。\n"
@@ -178,6 +184,31 @@ def write_lock(manifest_path: str, out_path: str) -> dict:
         "mcp_servers": [s.name for s in lock.mcp_servers],
         "instances": [i.name for i in lock.instances],
     }
+
+
+def read_lock(path: str) -> dict | None:
+    """juice.lock を読み YAML を dict で返す。ファイルが無ければ None。"""
+    p = Path(path)
+    if not p.exists():
+        return None
+    return yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+
+
+def lock_status(manifest: Manifest, lock_path: str) -> dict:
+    """manifest と juice.lock の整合状態を返す。
+
+    `{present, drift, expected, found}`:
+    - present … lock ファイルが存在するか
+    - drift   … lock の `manifestDigest` が manifest と食い違うか（present のときのみ意味を持つ）
+    - expected… manifest から計算した現在の digest
+    - found   … lock に記録されている digest（無ければ None）
+    """
+    expected = manifest_digest(manifest)
+    lock = read_lock(lock_path)
+    if lock is None:
+        return {"present": False, "drift": False, "expected": expected, "found": None}
+    found = lock.get("manifestDigest")
+    return {"present": True, "drift": found != expected, "expected": expected, "found": found}
 
 
 def _dedup(items) -> list[str]:

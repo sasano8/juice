@@ -159,7 +159,11 @@ juice instance verify tokyo-weather-bot
 > [--no-prune]`）も実装済み。manifest の各レイヤを依存順（mcp_server → skill / subagent → mcp_bundled →
 > instance）で現行 registry レイアウト（build.md）へ materialize し、宣言にない既存パッケージは prune する。
 > 同一内容は skip するため**冪等**（再 apply で no-op）。`--dry-run` で変更予定だけ表示。
-> ※ lock との連携（apply 時の drift 検出）と `juice plan`（差分表示）は次の統合タスク。
+>
+> **実装メモ（C005）:** lock ↔ apply を連携（lock → plan → apply の一筆書き）。`juice plan`（apply の
+> dry-run 昇格。差分のみ表示）を追加し、`juice apply` は `juice.lock` があれば `manifestDigest` を照合して
+> **drift を検出**する（既定は警告、`--frozen` でエラー、`--require-lock` で lock 不在をエラー）。
+> 整合状態は `lock_status(manifest, lock_path)` で取得できる。
 
 ---
 

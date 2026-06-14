@@ -13,7 +13,7 @@ import sys
 
 import yaml
 
-from ..core import LAYERS, Juice, ManifestError, load_manifest, write_lock
+from ..core import LAYERS, Juice, LockError, ManifestError, load_manifest, write_lock
 
 
 def _print_names(names: list[str], layer: str) -> None:
@@ -61,20 +61,34 @@ def build_parser() -> argparse.ArgumentParser:
     )
     lp.add_argument("-o", "--out", default="juice.lock", help="出力先（既定: juice.lock）")
 
-    apl = layer_subs.add_parser(
-        "apply", help="juice.yaml の desired state を registries へ冪等反映する"
-    )
-    apl.add_argument(
-        "-f", "--file", default="juice.yaml", help="manifest のパス（既定: juice.yaml）"
-    )
-    apl.add_argument("-n", "--namespace", default=None, help="namespace（既定: default）")
-    apl.add_argument(
-        "--no-prune",
-        dest="prune",
-        action="store_false",
-        help="宣言にない既存リソースを削除しない（既定は prune する）",
-    )
-    apl.add_argument("--dry-run", action="store_true", help="書き込まず、行われる変更だけ表示する")
+    for verb, help_text in (
+        ("apply", "juice.yaml の desired state を registries へ冪等反映する"),
+        ("plan", "apply を書き込まず実行し、行われる変更（差分）を表示する"),
+    ):
+        sp = layer_subs.add_parser(verb, help=help_text)
+        sp.add_argument(
+            "-f", "--file", default="juice.yaml", help="manifest のパス（既定: juice.yaml）"
+        )
+        sp.add_argument("-n", "--namespace", default=None, help="namespace（既定: default）")
+        sp.add_argument(
+            "--no-prune",
+            dest="prune",
+            action="store_false",
+            help="宣言にない既存リソースを削除しない（既定は prune する）",
+        )
+        sp.add_argument(
+            "--lock", default="juice.lock", help="照合する lock のパス（既定: juice.lock）"
+        )
+        sp.add_argument(
+            "--frozen", action="store_true", help="lock と drift していたらエラーにする"
+        )
+        sp.add_argument(
+            "--require-lock", action="store_true", help="juice.lock が無ければエラーにする"
+        )
+        if verb == "apply":
+            sp.add_argument(
+                "--dry-run", action="store_true", help="書き込まず、行われる変更だけ表示する"
+            )
 
     for layer in LAYERS:
         lp = layer_subs.add_parser(layer, help=f"{layer} パッケージを操作する")
@@ -238,22 +252,33 @@ def _cmd_lock(file: str, out: str) -> int:
     return 0
 
 
-def _cmd_apply(file: str, namespace: str | None, prune: bool, dry_run: bool) -> int:
-    """juice.yaml を registries へ反映する（不正なら 1）。"""
+def _cmd_apply(args) -> int:
+    """juice.yaml を registries へ反映（plan は dry-run）。不正・lock 違反なら 1。"""
+    dry_run = args.layer == "plan" or getattr(args, "dry_run", False)
     try:
-        result = Juice(namespace=namespace).apply(file, prune=prune, dry_run=dry_run)
-    except ManifestError as e:
-        print(f"invalid manifest: {e}", file=sys.stderr)
+        result = Juice(namespace=args.namespace).apply(
+            args.file,
+            prune=args.prune,
+            dry_run=dry_run,
+            lock_path=args.lock,
+            frozen=args.frozen,
+            require_lock=args.require_lock,
+        )
+    except (ManifestError, LockError) as e:
+        kind = "invalid manifest" if isinstance(e, ManifestError) else "lock error"
+        print(f"{kind}: {e}", file=sys.stderr)
         return 1
-    tag = "(dry-run) " if dry_run else ""
+    tag = "(plan) " if dry_run else ""
     print(
-        f"{tag}applied to namespace={result['namespace']}: "
+        f"{tag}namespace={result['namespace']}: "
         f"{len(result['written'])} written, {len(result['pruned'])} pruned"
     )
     for ref in result["written"]:
         print(f"  + {ref}")
     for ref in result["pruned"]:
         print(f"  - {ref}")
+    if result.get("warning"):
+        print(f"warning: {result['warning']}", file=sys.stderr)
     return 0
 
 
@@ -263,8 +288,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.layer == "lock":
         return _cmd_lock(args.file, args.out)
 
-    if args.layer == "apply":
-        return _cmd_apply(args.file, args.namespace, args.prune, args.dry_run)
+    if args.layer in ("apply", "plan"):
+        return _cmd_apply(args)
 
     if args.layer == "manifest" and args.action == "validate":
         return _cmd_manifest_validate(args.file)

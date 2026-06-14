@@ -115,10 +115,23 @@ def test_main_lock_reports_error(tmp_path, capsys: pytest.CaptureFixture[str]) -
 
 
 def test_parser_apply_flags() -> None:
-    args = build_parser().parse_args(["apply", "-f", "juice.yaml", "--dry-run", "--no-prune"])
+    args = build_parser().parse_args(
+        ["apply", "-f", "juice.yaml", "--dry-run", "--no-prune", "--frozen"]
+    )
     assert args.layer == "apply"
     assert args.dry_run is True
     assert args.prune is False
+    assert args.frozen is True
+    assert args.lock == "juice.lock"
+
+
+def test_parser_plan_flags() -> None:
+    args = build_parser().parse_args(["plan", "-f", "j.yaml", "--lock", "j.lock", "--require-lock"])
+    assert args.layer == "plan"
+    assert args.lock == "j.lock"
+    assert args.require_lock is True
+    # plan には --dry-run は無い（常に dry-run）。
+    assert not hasattr(args, "dry_run")
 
 
 def test_main_apply_reports_error(tmp_path, capsys: pytest.CaptureFixture[str]) -> None:
