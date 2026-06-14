@@ -1,7 +1,7 @@
 """juice CLI。
 
 例:
-    juice actor list
+    juice mcp_bundled list
     juice instance list
 各レイヤ配下のディレクトリ（= パッケージ）一覧を表示する。
 """

@@ -9,8 +9,8 @@
 「コマンドの再実行」では担保しない。Kubernetes と同じく **desired state を宣言 → `apply` で
 reconcile** する。`juice.yaml` が唯一の正（source of truth）。
 
-- パイプラインの終点は **deployable な instance**。`mcp_server` / `subagent` / `skill` / `actor` /
-  `instance` を 1 つの manifest で宣言する（複数 actor のスケジューリング＝`workflow` は
+- パイプラインの終点は **deployable な instance**。`mcp_server` / `subagent` / `skill` / `mcp_bundled` /
+  `instance` を 1 つの manifest で宣言する（複数 mcp_bundled のスケジューリング＝`workflow` は
   「1 instance を deployable にする」範囲の外なので扱わない）。
 - `registries/` は apply の **出力先**（reconcile 結果の置き場）であって、手で書く一次情報ではない。
 - 別の `pipeline.yml` は作らない。**manifest 自体がパイプライン**（宣言の二重化を避ける）。
@@ -63,7 +63,7 @@ skills:
     description: 都市の天気を取得し一言で要約する
 
 # 集約層：subagent + skill + mcp_server(tool) を結線。
-actors:
+mcp_bundled:
   - name: weather-bot
     subagent: forecaster
     skills: [report-weather]
@@ -72,11 +72,11 @@ actors:
         from: mcp_server:weather      # 取り込み/参照は from で表現
         env: [WEATHER_API_KEY]        # 値は書かず env 名の参照のみ
 
-# 具象：actor をバンドル・ビルドし、変数の既定値を与えた deployable な実個体。
+# 具象：mcp_bundled をバンドル・ビルドし、変数の既定値を与えた deployable な実個体。
 # これがパイプラインの最終成果物。
 instances:
   - name: tokyo-weather-bot
-    actor: weather-bot
+    mcp_bundled: weather-bot
     # 変数の既定値。これが揃って初めて deployable（入力なしでも起動できる状態）。
     defaults:
       city: "Tokyo"
@@ -95,7 +95,7 @@ instances:
 このパイプラインのゴールは「**deployable な instance**」を 1 つ作ること。deployable とは
 次の 2 つが揃った状態:
 
-1. **バンドル・ビルド済み** … instance が要する依存一式（actor → subagent / skill /
+1. **バンドル・ビルド済み** … instance が要する依存一式（mcp_bundled → subagent / skill /
    mcp_server=tool）が解決・集約・ビルドされ、`juice.lock` で digest が pin されている。
 2. **変数の既定値が定義済み** … 非 secret 変数は `defaults` に既定値があり、secret は
    `env:NAME` 参照が揃っている。→ 追加入力なしで起動できる。
@@ -125,7 +125,7 @@ juice bundle tokyo-weather-bot
 juice instance verify tokyo-weather-bot
 ```
 
-`apply` は **依存順（mcp_server → skill / subagent → actor → instance）** に下層から reconcile し、
+`apply` は **依存順（mcp_server → skill / subagent → mcp_bundled → instance）** に下層から reconcile し、
 各リソースを「あるべき状態」へ収束させる（冪等）。`bundle` がその instance を deployable 成果物に
 固める終点。
 

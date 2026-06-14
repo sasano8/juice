@@ -1,6 +1,6 @@
 kind: instance
 name: tokyo-weather-bot
-actor: weather-bot
+mcp_bundled: weather-bot
 status: stopped
 env:
   # 実 secret はここに直書きしない（env 名の参照にとどめる）

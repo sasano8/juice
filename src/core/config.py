@@ -3,7 +3,7 @@
 1 つの Config が「あるストレージ上の 1 ロケーション」を指す接続記述子。
 `backend` がストレージ種別（local / s3 …）、`storage_option` が backend 毎の接続情報
 （local なら不要なので空）、`bucket` が入れ物（local なら `registries`）、`namespace` が
-リソース空間の区画（既定 `default`）、`path` がその中の 1 つの場所（local なら `actors` 等）を
+リソース空間の区画（既定 `default`）、`path` がその中の 1 つの場所（local なら `mcp_bundled` 等）を
 指す。物理的な位置は (bucket, namespace, layer/path) の組で決まり、Kubernetes の
 namespace × kind × name と同じリソース空間になる。デフォルトや overrides の解決は factory が
 担い、ここには解決済みの値だけを持たせる。複数レイヤを束ねるのは RegistryArray の役割。
@@ -18,13 +18,13 @@ LAYERS: dict[str, str] = {
     "tool": "tools",
     "skill": "skills",
     "subagent": "subagents",
-    "actor": "actors",
+    "mcp_bundled": "mcp_bundled",
     "workflow": "workflows",
     "instance": "instances",
 }
 
 # `juice all` の列挙順。依存の上位（具象=instance）から末端（tool）へ向かう順を明示宣言する。
-ALL_ORDER: list[str] = ["instance", "workflow", "actor", "subagent", "skill", "tool"]
+ALL_ORDER: list[str] = ["instance", "workflow", "mcp_bundled", "subagent", "skill", "tool"]
 
 
 @dataclass
@@ -33,4 +33,4 @@ class Config:
     storage_option: dict[str, str]  # backend 毎の接続情報。local なら空
     bucket: str  # 入れ物。local なら "registries"、s3 ならバケット名
     namespace: str  # リソース空間の区画。既定 "default"
-    path: str  # namespace 内の 1 ロケーション。local なら "actors" 等
+    path: str  # namespace 内の 1 ロケーション。local なら "mcp_bundled" 等

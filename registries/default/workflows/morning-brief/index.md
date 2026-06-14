@@ -3,7 +3,7 @@ kind: workflow
 name: morning-brief
 schedule: "0 7 * * *"
 steps:
-  - actor: weather-bot
+  - mcp_bundled: weather-bot
     input: { city: "Tokyo" }
 ---
 

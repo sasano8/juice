@@ -1,5 +1,5 @@
 ---
-kind: actor
+kind: mcp_bundled
 name: weather-bot
 subagent: forecaster
 skills: [report-weather]

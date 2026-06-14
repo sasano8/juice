@@ -75,3 +75,33 @@ flowchart LR
 
 > deploy / 起動そのものはこのパイプラインの外（次工程）。ここでは「いつでもデプロイできる
 > 成果物（＝deployable な mcp_bundled＝mcp_server）」を作るところまでを範囲とする。
+
+## workflow（実行・協調レイヤ：別軸）
+
+mcp_bundled の関係図とは**別軸**（こちらは実行時の協調）。**instance = mcp_bundled を実体化
+したもの**（image → container の container 相当）。**1 つの workflow が複数の instance を協調
+動作**させる。**workflow 同士は協調しない**（必要ならさらに上位レイヤの話。別途検討）。
+
+```mermaid
+flowchart TB
+    WF{{"workflow（中心の 1 つ）"}}
+    IN1["instance A"]
+    IN2["instance B"]
+    BND1["mcp_bundled X"]
+    BND2["mcp_bundled Y"]
+
+    WF -->|"協調 1:N"| IN1
+    WF -->|"協調 1:N"| IN2
+    IN1 -->|"実体化 N:1"| BND1
+    IN2 -->|"実体化 N:1"| BND2
+    WF -. "協調しない（上位レイヤ・別途検討）" .-> WF2{{"別の workflow"}}
+```
+
+| 関係 | 多重度 | 意味 |
+|------|--------|------|
+| workflow → instance | **1 : N** | 複数 instance を協調動作させる |
+| instance → mcp_bundled | **N : 1** | mcp_bundled を実体化したもの（1 bundled → 複数 instance） |
+| workflow ↔ workflow | — | 協調しない（上位レイヤ。別途検討） |
+
+> **image / container 類比:** mcp_bundled = image（deployable 成果物）、instance = container（実体）。
+> workflow はその container 群を協調させる実行レイヤ。
