@@ -3,7 +3,9 @@ name = "juice"
 version = "0.0.1"
 description = "AI エージェントのパッケージマネージャー"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "pyyaml>=6.0.3",
+]
 
 [project.scripts]
 juice = "src.cli:main"

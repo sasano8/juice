@@ -23,6 +23,16 @@ LAYERS: dict[str, str] = {
     "instance": "instances",
 }
 
+# 各レイヤのエントリファイル名（1 パッケージ = 1 ディレクトリ）
+ENTRY_FILES: dict[str, str] = {
+    "tool": "index.md",
+    "skill": "SKILL.md",
+    "subagent": "index.md",
+    "mcp_bundled": "index.md",
+    "workflow": "index.md",
+    "instance": "index.yml",
+}
+
 # `juice all` の列挙順。依存の上位（具象=instance）から末端（tool）へ向かう順を明示宣言する。
 ALL_ORDER: list[str] = ["instance", "workflow", "mcp_bundled", "subagent", "skill", "tool"]
 

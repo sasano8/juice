@@ -6,12 +6,13 @@
 
 from __future__ import annotations
 
+import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
 
 
 class Storage(ABC):
-    """レジストリ格納先への読み取りアクセス。"""
+    """レジストリ格納先へのアクセス。"""
 
     @abstractmethod
     def list_dirs(self, path: str) -> list[str]:
@@ -24,6 +25,14 @@ class Storage(ABC):
     @abstractmethod
     def read_text(self, path: str) -> str:
         """`path` のテキストを読む。"""
+
+    @abstractmethod
+    def write_text(self, path: str, text: str) -> None:
+        """`path` にテキストを書く（親ディレクトリは必要なら作成）。"""
+
+    @abstractmethod
+    def remove(self, path: str) -> None:
+        """`path` を削除（ディレクトリは再帰削除）。無ければ無視。"""
 
 
 class LocalStorage(Storage):
@@ -46,3 +55,15 @@ class LocalStorage(Storage):
 
     def read_text(self, path: str) -> str:
         return self._resolve(path).read_text(encoding="utf-8")
+
+    def write_text(self, path: str, text: str) -> None:
+        target = self._resolve(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+
+    def remove(self, path: str) -> None:
+        target = self._resolve(path)
+        if target.is_dir():
+            shutil.rmtree(target)
+        elif target.exists():
+            target.unlink()

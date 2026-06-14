@@ -1,0 +1,17 @@
+# bundle.yml — mcp_bundled ビルド宣言（サンプル）
+#
+# 2 段階:
+#   登録:   juice mcp_bundled bundle -f bundle.yml weather-bot
+#   実体化: juice mcp_bundled build weather-bot
+#
+# 成果物名（weather-bot）は CLI 引数で与える（ここには書かない）。
+# このファイルは「何を内包するか（include）」等のビルド宣言に専念する。
+apiVersion: juice/v1
+kind: bundle
+namespace: default
+
+# 内包するレイヤを上から順に解決（vendoring）する。省略時は [subagent, skills, tools]。
+include:
+  - subagent   # mcp_bundled が参照する脳（forecaster）
+  - skills     # 結線する手順（report-weather）
+  - tools      # 結線する tool / mcp_server（weather）
