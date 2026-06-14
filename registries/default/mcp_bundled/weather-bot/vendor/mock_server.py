@@ -25,13 +25,18 @@ TOOLS = [
 def handle(req: dict) -> dict:
     method = req.get("method")
     if method == "initialize":
-        return {"serverInfo": {"name": "mock-weather", "version": "0.0.1"}, "capabilities": {"tools": {}}}
+        return {
+            "serverInfo": {"name": "mock-weather", "version": "0.0.1"},
+            "capabilities": {"tools": {}},
+        }
     if method == "tools/list":
         return {"tools": TOOLS}
     if method == "tools/call":
         args = (req.get("params") or {}).get("arguments", {})
         city = args.get("city", "?")
-        return {"content": [{"type": "text", "text": f"{city}: 晴れ 26C（モック予報）"}]}
+        return {
+            "content": [{"type": "text", "text": f"{city}: 晴れ 26C（モック予報）"}]
+        }
     raise ValueError(f"unknown method: {method}")
 
 

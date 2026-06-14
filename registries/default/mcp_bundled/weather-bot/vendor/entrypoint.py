@@ -24,13 +24,22 @@ class StdioClient:
 
     def __init__(self, command: list[str]) -> None:
         self.proc = subprocess.Popen(
-            command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, cwd=str(HERE)
+            command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+            cwd=str(HERE),
         )
         self._id = 0
 
     def call(self, method: str, params: dict | None = None) -> dict:
         self._id += 1
-        req = {"jsonrpc": "2.0", "id": self._id, "method": method, "params": params or {}}
+        req = {
+            "jsonrpc": "2.0",
+            "id": self._id,
+            "method": method,
+            "params": params or {},
+        }
         self.proc.stdin.write(json.dumps(req, ensure_ascii=False) + "\n")
         self.proc.stdin.flush()
         return json.loads(self.proc.stdout.readline())
@@ -54,7 +63,10 @@ def serve() -> None:
         method = req.get("method")
         try:
             if method == "initialize":
-                result = {"serverInfo": {"name": NAME, "version": "0.0.1"}, "capabilities": {"tools": {}}}
+                result = {
+                    "serverInfo": {"name": NAME, "version": "0.0.1"},
+                    "capabilities": {"tools": {}},
+                }
             elif method == "tools/list":
                 result = {"tools": tools}
             elif method == "tools/call":

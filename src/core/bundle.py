@@ -252,14 +252,22 @@ def init(registries: RegistryArray, name: str, clean: bool = False) -> dict:
         spec_text = registries.read("mcp_bundled", name, SPEC_FILE) if exists else None
         registries.remove("mcp_bundled", name, "")
         if spec_text is None:
-            spec_text = BUNDLE_YML_TEMPLATE.format(namespace=registries.namespace, name=name)
+            spec_text = BUNDLE_YML_TEMPLATE.format(
+                namespace=registries.namespace, name=name
+            )
         registries.write("mcp_bundled", name, SPEC_FILE, spec_text)
     else:
         registries.write(
-            "mcp_bundled", name, SPEC_FILE,
+            "mcp_bundled",
+            name,
+            SPEC_FILE,
             BUNDLE_YML_TEMPLATE.format(namespace=registries.namespace, name=name),
         )
-    return {"kind": "init", "mcp_bundled": name, "spec": f"mcp_bundled/{name}/{SPEC_FILE}"}
+    return {
+        "kind": "init",
+        "mcp_bundled": name,
+        "spec": f"mcp_bundled/{name}/{SPEC_FILE}",
+    }
 
 
 def bundle(registries: RegistryArray, name: str) -> dict:
@@ -276,7 +284,12 @@ def bundle(registries: RegistryArray, name: str) -> dict:
         registries.write("mcp_bundled", name, f"{VENDOR_DIR}/{fname}", text)
         generated.append(f"mcp_bundled/{name}/{VENDOR_DIR}/{fname}")
 
-    return {"kind": "bundle", "mcp_bundled": name, "vendored": vendored, "generated": generated}
+    return {
+        "kind": "bundle",
+        "mcp_bundled": name,
+        "vendored": vendored,
+        "generated": generated,
+    }
 
 
 def build(registries: RegistryArray, name: str, image: str | None = None) -> dict:
@@ -313,4 +326,9 @@ def run(registries: RegistryArray, name: str, image: str | None = None) -> dict:
     応答例: echo '<JSON-RPC request>' | docker run --rm -i <image>
     """
     tag = _image_tag(registries, name, image)
-    return {"kind": "run", "mcp_bundled": name, "image": tag, "command": f"docker run --rm -i {tag}"}
+    return {
+        "kind": "run",
+        "mcp_bundled": name,
+        "image": tag,
+        "command": f"docker run --rm -i {tag}",
+    }

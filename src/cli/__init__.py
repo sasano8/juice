@@ -39,7 +39,9 @@ def _cmd_all(juice: Juice) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="juice", description="AI エージェントのパッケージマネージャー")
+    parser = argparse.ArgumentParser(
+        prog="juice", description="AI エージェントのパッケージマネージャー"
+    )
     layer_subs = parser.add_subparsers(dest="layer", required=True, metavar="LAYER")
 
     ap = layer_subs.add_parser("all", help="全レイヤを依存順に一覧表示する")
@@ -51,25 +53,56 @@ def build_parser() -> argparse.ArgumentParser:
         action_subs = lp.add_subparsers(dest="action", required=True, metavar="ACTION")
         action_subs.add_parser("list", help=f"{layer} 一覧を表示する")
         if layer == "mcp_bundled":
-            ip = action_subs.add_parser("init", help="bundle.yml の雛形を生成して成果物を初期化する")
+            ip = action_subs.add_parser(
+                "init", help="bundle.yml の雛形を生成して成果物を初期化する"
+            )
             ip.add_argument("name", help="成果物名（mcp_bundled）")
-            ip.add_argument("-n", "--namespace", default=None, help="namespace（既定: default）")
-            ip.add_argument("--clean", action="store_true", help="ディレクトリをクリーンアップして再初期化する")
+            ip.add_argument(
+                "-n", "--namespace", default=None, help="namespace（既定: default）"
+            )
+            ip.add_argument(
+                "--clean",
+                action="store_true",
+                help="ディレクトリをクリーンアップして再初期化する",
+            )
 
-            bp = action_subs.add_parser("bundle", help="内包物を vendoring し requirements/Dockerfile/entrypoint を生成する")
+            bp = action_subs.add_parser(
+                "bundle",
+                help="内包物を vendoring し requirements/Dockerfile/entrypoint を生成する",
+            )
             bp.add_argument("name", help="成果物名（mcp_bundled）")
-            bp.add_argument("-n", "--namespace", default=None, help="namespace（既定: default）")
+            bp.add_argument(
+                "-n", "--namespace", default=None, help="namespace（既定: default）"
+            )
 
             blp = action_subs.add_parser("build", help="docker でイメージをビルドする")
             blp.add_argument("name", help="成果物名（mcp_bundled）")
-            blp.add_argument("-n", "--namespace", default=None, help="namespace（既定: default）")
-            blp.add_argument("-t", "--tag", default=None, help="イメージタグ（既定: juice/<name>:latest）")
+            blp.add_argument(
+                "-n", "--namespace", default=None, help="namespace（既定: default）"
+            )
+            blp.add_argument(
+                "-t",
+                "--tag",
+                default=None,
+                help="イメージタグ（既定: juice/<name>:latest）",
+            )
 
-            rp = action_subs.add_parser("run", help="docker で mcp_server を起動する（stdio）")
+            rp = action_subs.add_parser(
+                "run", help="docker で mcp_server を起動する（stdio）"
+            )
             rp.add_argument("name", help="成果物名（mcp_bundled）")
-            rp.add_argument("-n", "--namespace", default=None, help="namespace（既定: default）")
-            rp.add_argument("-t", "--tag", default=None, help="イメージタグ（既定: juice/<name>:latest）")
-            rp.add_argument("--build", action="store_true", help="run の前に build も実行する")
+            rp.add_argument(
+                "-n", "--namespace", default=None, help="namespace（既定: default）"
+            )
+            rp.add_argument(
+                "-t",
+                "--tag",
+                default=None,
+                help="イメージタグ（既定: juice/<name>:latest）",
+            )
+            rp.add_argument(
+                "--build", action="store_true", help="run の前に build も実行する"
+            )
 
     return parser
 
