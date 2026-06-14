@@ -1,0 +1,17 @@
+{
+  "name": "weather-bot",
+  "provider": "anthropic",
+  "model": "claude-opus-4-8",
+  "api_key_env": "ANTHROPIC_API_KEY",
+  "api_key_file": null,
+  "system": "あなたは天気予報アシスタントです。簡潔で親切に、要点だけを伝えてください。",
+  "mcp_servers": {
+    "tools": {
+      "command": "python",
+      "args": [
+        "mock_server.py"
+      ],
+      "transport": "stdio"
+    }
+  }
+}

@@ -59,6 +59,8 @@ class Juice:
         """docker イメージビルドコマンドを生成して返す（実行はしない）。"""
         return _bundle.build(self.registries, name, image)
 
-    def run(self, name: str, image: str | None = None) -> dict:
-        """docker run コマンド（mcp_server を stdio 起動）を生成して返す。"""
-        return _bundle.run(self.registries, name, image)
+    def run(
+        self, name: str, mode: str = "api", image: str | None = None, env_file: str | None = None
+    ) -> dict:
+        """mode（api / ui / mcp_server）に応じた docker run コマンドを生成して返す。"""
+        return _bundle.run(self.registries, name, mode, image, env_file)

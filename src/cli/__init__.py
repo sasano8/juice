@@ -88,9 +88,16 @@ def build_parser() -> argparse.ArgumentParser:
             )
 
             rp = action_subs.add_parser(
-                "run", help="docker で mcp_server を起動する（stdio）"
+                "run", help="mode に応じてサービスを docker 起動する（api / ui / mcp_server）"
             )
             rp.add_argument("name", help="成果物名（mcp_bundled）")
+            rp.add_argument(
+                "mode",
+                nargs="?",
+                default="api",
+                choices=["api", "ui", "mcp_server"],
+                help="起動するサービス（既定: api）",
+            )
             rp.add_argument(
                 "-n", "--namespace", default=None, help="namespace（既定: default）"
             )
@@ -102,6 +109,18 @@ def build_parser() -> argparse.ArgumentParser:
             )
             rp.add_argument(
                 "--build", action="store_true", help="run の前に build も実行する"
+            )
+            rp.add_argument(
+                "--bundle",
+                action="store_true",
+                help="run の前に bundle からやり直す（bundle→build→run）",
+            )
+            rp.add_argument(
+                "--env-file",
+                "--env",
+                dest="env_file",
+                default=None,
+                help="docker の --env-file で読み込む .env パス（無ければスキップ）",
             )
 
     return parser
@@ -142,14 +161,34 @@ def _cmd_build(name: str, namespace: str | None, tag: str | None) -> int:
     return _exec(Juice(namespace=namespace).build(name, image=tag)["command"])
 
 
-def _cmd_run(name: str, namespace: str | None, tag: str | None, build: bool) -> int:
-    """docker で mcp_server を起動する（--build で事前に build も実行）。"""
+def _cmd_run(
+    name: str,
+    mode: str,
+    namespace: str | None,
+    tag: str | None,
+    build: bool,
+    bundle: bool,
+    env_file: str | None,
+) -> int:
+    """mode に応じてサービスを docker 起動する。
+
+    --bundle: bundle からやり直す（bundle→build→run）。--build: build→run。
+    --env-file: .env を docker に読ませる（無ければスキップ）。
+    """
+    import os
+
     juice = Juice(namespace=namespace)
-    if build:
+    if env_file and not os.path.exists(env_file):
+        print(f"(env-file skipped: {env_file} not found)", file=sys.stderr)
+        env_file = None
+    if bundle:
+        result = juice.bundle(name)
+        print(f"(bundle) regenerated {len(result.get('generated', []))} files", file=sys.stderr)
+    if build or bundle:  # bundle 後はイメージ再ビルドが必要
         rc = _exec(juice.build(name, image=tag)["command"])
         if rc != 0:
             return rc
-    return _exec(juice.run(name, image=tag)["command"])
+    return _exec(juice.run(name, mode=mode, image=tag, env_file=env_file)["command"])
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -171,7 +210,9 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_build(args.name, args.namespace, args.tag)
 
     if args.action == "run":
-        return _cmd_run(args.name, args.namespace, args.tag, args.build)
+        return _cmd_run(
+            args.name, args.mode, args.namespace, args.tag, args.build, args.bundle, args.env_file
+        )
 
     print(f"unknown action: {args.action}", file=sys.stderr)
     return 1

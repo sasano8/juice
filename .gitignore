@@ -17,6 +17,7 @@ wheels/
 venv/
 env/
 .env
+.env.agent
 
 # Test / coverage / type-check caches
 .pytest_cache/

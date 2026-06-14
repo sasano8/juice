@@ -8,6 +8,12 @@ namespace: default
 image: juice/weather-bot
 version: 0.0.1
 
+# 会話に使う LLM。API キーは環境変数 or ファイルで注入（値は書かない）
+llm:
+  provider: anthropic
+  model: claude-opus-4-8
+  api_key_env: ANTHROPIC_API_KEY
+
 # 結線（定義）
 subagent: forecaster
 skills:
