@@ -1,14 +1,15 @@
 """設定。
 
-レジストリのベースパスと、各レイヤのディレクトリ解決を持つ。
-まずはデフォルト（`registries/<layer>`）をベタ打ちし、必要に応じて
-レイヤ単位でパスを上書きできる。将来 S3 などへ拡張する余地として
-`backend` を持たせてあるが、現状は local のみ。
+1 つの Config が「あるストレージ上の 1 ロケーション」を指す接続記述子。
+`backend` がストレージ種別（local / s3 …）、`storage_option` が backend 毎の接続情報
+（local なら不要なので空）、`bucket` が入れ物（local なら `registries`）、`path` がその中の
+1 つの場所（local なら `actors` 等）を指す。デフォルトや overrides の解決は factory が担い、
+ここには解決済みの値だけを持たせる。複数レイヤを束ねるのは RegistryArray の役割。
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 # CLI で使う単数形コマンド名 -> レジストリ上のディレクトリ名（複数形）
 LAYERS: dict[str, str] = {
@@ -24,19 +25,9 @@ LAYERS: dict[str, str] = {
 ALL_ORDER: list[str] = ["instance", "workflow", "actor", "subagent", "skill", "tool"]
 
 
-
 @dataclass
 class Config:
-    base: str = "registries"
-    backend: str = "local"  # 将来: "s3" 等
-    root: str = "."  # local backend の基点
-    # レイヤ単位のパス上書き。未指定なら `{base}/{LAYERS[layer]}`
-    overrides: dict[str, str] = field(default_factory=dict)
-
-    def path_for(self, layer: str) -> str:
-        """レイヤのレジストリパスを返す。上書きがあればそれを優先。"""
-        if layer not in LAYERS:
-            raise KeyError(f"unknown layer: {layer}")
-        if layer in self.overrides:
-            return self.overrides[layer]
-        return f"{self.base}/{LAYERS[layer]}"
+    backend: str  # ストレージ種別: "local" | "s3" 等
+    storage_option: dict[str, str]  # backend 毎の接続情報。local なら空
+    bucket: str  # 入れ物。local なら "registries"、s3 ならバケット名
+    path: str  # bucket 内の 1 ロケーション。local なら "actors" 等
