@@ -1,119 +1,77 @@
-# app_mcp_manager
+# juice
 
-AI エージェントのための「パッケージマネージャー」。
+AI エージェントのパッケージマネージャー。各レイヤを **テンプレート**として宣言し、
+最終的に **deployable な mcp_bundled** を 1 つ組み上げる。詳細は
+[docs/workspace.md](docs/workspace.md) / [docs/build.md](docs/build.md)。
 
-ツール・スキル・エージェント・ワークフローを、それぞれ独立した **パッケージ** として
-宣言・バージョン管理・配布・実行できるようにすることを目的とする。
-コンテナにおける「イメージ（テンプレート）」と「コンテナ（具象）」の関係を、
-AI エージェントの世界に持ち込む。
+> **`mcp_bundled (deployable) = mcp_server`。** `mcp_server`（公開インターフェース）には
+> **remote**（外部参照）と **bundled**（自作＝同梱）の 2 実現がある。`mcp_bundled` は依存一式を
+> vendoring・ビルドし、変数の既定値・secret 参照を抱えた、自己完結したデプロイ単位。
 
----
+## レイヤ間の関係
 
-## 中核概念
+始発点は **公開インターフェースである `mcp_server`**。これには **remote**（外部・黒箱）と
+**bundled = `mcp_bundled`**（自作・同梱）の 2 種類がある。bundled は subagent / skill / tool を
+所持する。そして **その tool を公開しているのも、また 1 つの mcp_server**（remote or 別の
+mcp_bundled）。だから tool をたどると先頭の mcp_server に戻る＝**再帰**（底は remote）。
 
-本プロジェクトが管理するパッケージは 5 種。依存方向は下から上へ積み上がる。
+```mermaid
+flowchart TB
+    MCP{{"mcp_server<br/>（公開インターフェース）"}}
+    MCP -->|"remote"| REMOTE["remote mcp_server<br/>（外部・黒箱）"]
+    MCP -->|"bundled"| BND["mcp_bundled<br/>（自作・同梱 = deployable）"]
 
-```
-workflow          … 複数の actor を束ねる実行スケジューラ
-   └─ actor       … subagent / skill / tool を結線・具象化したファサード（実行可能エージェント）
-        ├─ subagent … model + system prompt + tool 許可リスト（標準・可搬な「脳」）
-        ├─ skill    … ある関心を実行する「手順」（prompt を内包する）
-        └─ tool     … 外部システムと連携する具体的な実装
-```
-
-| 概念 | 定義 | コンテナ類比 |
-|------|------|------------|
-| **tool** | 外部システムなどと連携する具体的な実装（capability） | ライブラリ／バイナリ依存 |
-| **skill** | ある関心を実行する手順。指示文（prompt）はこの中に含める | playbook |
-| **subagent** | model + system prompt + tool の許可リストを宣言した、標準・可搬な「脳」テンプレート | ベースイメージ |
-| **actor** | subagent / skill / tool を結線し、単一の実行可能エージェントとして見せる **ファサード（合成物）テンプレート** | イメージ＋起動設定 |
-| **workflow** | 複数の actor を束ねる実行スケジューラ | docker-compose / DAG |
-
-### tool は subagent と actor の両方に現れるが役割が違う
-
-`tool` は 2 層に出てくるが、責務が分かれているため衝突しない。
-
-| 層 | tool に対する責務 |
-|----|------------------|
-| **subagent** | 「**何を使ってよいか**」= 許可リスト（capability / 権限の宣言）。標準フォーマットのまま |
-| **actor** | 「**実体を渡し、起動可能にする**」= 提供と結線（facade） |
-
-例: subagent は「github を使ってよい」と宣言するだけ。actor が「これが github の MCP server」と実体を結線する。
-
-### テンプレート と 具象（instance）
-
-全パッケージは可搬な **テンプレート**。これに env / secret（API キー等）を注入して
-起動可能にした 1 個体が **instance（具象）**。コンテナの「イメージ ↔ 起動済みコンテナ」に等しい。
-
-- **テンプレート** … `actors/` 等。依存を宣言した雛形。可搬・再利用可能。
-- **instance** … `instances/`。テンプレート（主に actor）に具象値を注入した実個体。`docker ps` で並ぶイメージ。
-
-具象化は起動ごとに何度でも行える（image → container 型）。
-**具象化情報（secret 注入）はテンプレートではなく instance が持つ**。
-
----
-
-## ディレクトリ構成
-
-```
-.
-├── registries/        … 管理対象パッケージの置き場（= registry 本体）
-│   ├── tools/         …   tool テンプレート（MCP server 単位）
-│   ├── skills/        …   skill テンプレート（prompt を内包）
-│   ├── subagents/     …   subagent テンプレート（標準・可搬な「脳」）
-│   ├── actors/        …   actor テンプレート（subagent / skill / tool の合成）
-│   ├── workflows/     …   workflow テンプレート
-│   └── instances/     …   具象（actor の実個体 / docker ps 相当）
-└── src/               … パッケージマネージャー本体。registries/ を参照する
+    BND -->|"所持 1"| SA["subagent"]
+    BND -->|"所持 N"| SK["skill"]
+    BND -->|"所持 N"| TL["tool"]
+    SK -.->|"requires N（前提 tool）"| TL
+    SA -.->|"allow N（許可リスト）"| TL
+    TL -.->|"この tool を公開する mcp_server（再帰）"| MCP
 ```
 
-> `prompts/` は設けない。prompt を複数 skill で共有すると skill 間に暗黙の結合が生まれ、
-> 依存関係が複雑化するため。**重複は許容し、結合は回避する**方針で、prompt は各 skill に内包する。
+> **包含制約:** `skill.requires ⊆ subagent.allow ⊆ mcp_bundled.provides`
+> （手順が呼ぶ tool ⊆ 許可された tool ⊆ 実体が提供される tool）。`verify` がこれを検査する。
 
-### ファイル規約（1 パッケージ = 1 ディレクトリ）
+| 関係 | 多重度 | 意味 |
+|------|--------|------|
+| mcp_server → 実体 | 1 : 1 | remote（外部）か bundled（= mcp_bundled）のいずれか |
+| mcp_bundled → subagent | **1 : 1** | 脳は 1 つ |
+| mcp_bundled → skill | **1 : N** | 手順を複数所持 |
+| mcp_bundled → tool | **1 : N** | tool を複数所持 |
+| skill → tool | **N : M** | 手順が呼ぶ前提 tool（requires）。`skill.requires ⊆ subagent.allow` |
+| subagent → tool | **1 : N** | 使ってよい tool の許可リスト |
+| tool → mcp_server | N : 1 | その tool を公開している mcp_server（remote or 別の mcp_bundled）＝再帰 |
 
-| 種別 | エントリファイル | 形式 | 理由 |
-|------|----------------|------|------|
-| tool / subagent / actor / workflow | `<name>/index.md` | YAML frontmatter + 本文 | 本文に散文（prompt 等）を持ちうる |
-| skill | `<name>/SKILL.md` | YAML frontmatter + 本文 | Claude Code 標準に準拠 |
-| instance | `<name>/index.yml` | 純 YAML | 具象パラメータのみで散文不要 |
+- **mcp_server = 公開インターフェース。** remote でも bundled でも、消費側からは同一に見える。
+- **remote** … 既存の MCP server を黒箱として参照（実体は内包せず digest で pin）。
+- **bundled（mcp_bundled）** … subagent / skill は内包（vendoring）、tool は別の mcp_server が公開（再帰）。
 
-frontmatter／YAML の先頭は `kind:`（`tool` / `skill` / `subagent` / `actor` / `workflow` / `instance`）で型を識別する。
+## 関係の 2 レベル（参照 vs バンドル）
 
----
+混同しやすいので分けて捉える。
 
-## 標準フォーマット方針
+| 関係 | レベル | 多重度 | 目的 |
+|------|--------|--------|------|
+| skill / mcp_server を複数 mcp_bundled が使う | **参照**（authoring） | **N : M** | 再利用・共有 |
+| 1 mcp_bundled が抱える subagent / skill / tool | **バンドル**（build） | **1 : N（包含）** | **deployable 化（vendoring）** |
 
-「既存ランタイム（Claude Code 等）がそのまま解釈できる標準フォーマット」に寄せることを基本とし、
-標準が存在しない領域のみ独自スキーマを定義する。
+→ 参照レベルでは共有（N:M）だが、**bundle 時に包含ツリー（1:N）へ畳んで vendoring** し、
+mcp_bundled を自己完結＝ deployable な mcp_server にする。
 
-| 対象 | 準拠する標準 | 備考 |
-|------|------------|------|
-| **tool** | **MCP（Model Context Protocol）server** | package 単位は **MCP server 単位**。配布・起動・認証（env/secret）がサーバー単位で効くため、`tools/<server-name>/` を package 境界とする |
-| **skill** | **Claude Code skill**（`SKILL.md` + frontmatter + 補助ファイル） | prompt はこの中に内包 |
-| **subagent** | **Claude Code subagent**（`.claude/agents/*.md`） | **拡張せず標準のまま**保つ（可搬性最優先）。model + system prompt + tool 許可リストのみ |
-| **actor** | **独自スキーマ（合成・ファサード層）** | subagent を参照し、skill / tool の実体を結線する。標準では表現できないため独自定義 |
-| **workflow** | **独自スキーマ** | 宣言的なマルチエージェント workflow の業界標準は未確立。将来 LangGraph 等へのコンパイル出力を想定 |
-| **instance** | **独自スキーマ（純 YAML）** | テンプレートに env / secret を注入した具象。secret の値は直書きせず参照（env 名）にとどめる |
+## deployable までのパイプライン
 
-### subagent と actor の責務分離
+```mermaid
+flowchart LR
+    宣言["juice.yaml（宣言）"] -->|juice lock| LK[(juice.lock<br/>版/digest を pin)]
+    LK -->|juice apply| RG[(registries/<br/>reconcile 結果)]
+    RG -->|juice bundle| BND["mcp_bundled (deployable)<br/>= mcp_server"]
+    BND -->|juice verify| OK{{deployable?}}
+```
 
-「subagent 形式を拡張して actor を表現する」のではなく、不一致（具象化・skill 依存宣言）を
-拡張で埋めず **層を分けて解決**する。
+- **lock** … 参照パッケージ/registry の版・digest を pin（再現性の本体）。
+- **apply** … manifest を registry へ冪等 reconcile（依存順に下層から）。
+- **bundle** … mcp_bundled の依存一式を vendoring・ビルドし、変数既定値を確定 → deployable 化。
+- **verify** … 未解決依存・既定値未設定の変数を検出して deployable か判定。
 
-- **subagent** … 標準フォーマットのまま。拡張しない → 他ランタイムへもそのまま持ち出せる。
-- **actor** … subagent に足りない点を上位層で補う独自スキーマ：
-  - **skill / tool の依存宣言と結線** … 「どの subagent に、どの skill と、どの tool 実体を結ぶか」を宣言する。
-- **instance** … secret 注入などの具象化情報を持つ（テンプレートからは分離）。
-
----
-
-## パッケージマネージャーとして今後必要になる要素
-
-現時点では未実装だが、package manager の核として以下が必要になる。
-
-- **ローダー / パーサ** … `registries/**/index.md`（`SKILL.md` / `index.yml`）を読み、`kind` で型付けしてモデル化
-- **依存解決** … `workflow → actor → (subagent, skill, tool)` の参照を名前で引き当て・検証
-- **具象化** … `${WEATHER_API_KEY}` 等の env / secret を instance に注入
-- **versioning** … 例: `actor@1.2` が `subagent@>=2.0` を要求、等
-- **依存方向の保証** … `subagent → (model, tool-allowlist)`、`actor → (subagent, skill, tool)`、`workflow → actor`、`instance → actor`
+> deploy / 起動そのものはこのパイプラインの外（次工程）。ここでは「いつでもデプロイできる
+> 成果物（＝deployable な mcp_bundled＝mcp_server）」を作るところまでを範囲とする。
