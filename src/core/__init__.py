@@ -30,13 +30,13 @@ __all__ = [
 class Juice:
     """juice の操作をまとめた API ファサード。
 
-    bucket からレジストリ群（RegistryArray）を組み立て、レイヤ単位／全レイヤの一覧取得を
-    提供する。出力整形（ラベル付けや並び）は呼び出し側（CLI 等）の責務とし、ここでは
+    bucket / namespace からレジストリ群（RegistryArray）を組み立て、レイヤ単位／全レイヤの
+    一覧取得を提供する。出力整形（ラベル付けや並び）は呼び出し側（CLI 等）の責務とし、ここでは
     生データ（名前リスト）のみ返す。
     """
 
-    def __init__(self, bucket: str | None = None) -> None:
-        self.registries: RegistryArray = create_registries(bucket)
+    def __init__(self, bucket: str | None = None, namespace: str | None = None) -> None:
+        self.registries: RegistryArray = create_registries(bucket, namespace=namespace)
 
     def list(self, layer: str) -> list[str]:
         """単一レイヤのパッケージ名一覧を返す。"""
