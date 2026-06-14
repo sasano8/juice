@@ -15,6 +15,37 @@ import yaml
 
 from ..core import LAYERS, Juice, LockError, ManifestError, load_manifest, write_lock
 
+# 宣言ライフサイクル（juice.yaml）の典型フロー。トップレベル -h の epilog に出す。
+_WORKFLOW_EPILOG = """\
+宣言ライフサイクル（juice.yaml）の例:
+  juice manifest validate -f juice.yaml    # 構文・参照・version 制約を検証
+  juice lock -f juice.yaml -o juice.lock   # 解決して lock を冪等生成
+  juice plan -f juice.yaml                 # 反映の差分を確認（書き込まない）
+  juice apply -f juice.yaml                # registries へ反映（lock と drift 検査）
+
+パッケージ一覧:
+  juice all list                           # 全レイヤを依存順に一覧
+  juice mcp_bundled run weather-bot ui     # サンプルを起動（bundle→build→run）
+"""
+
+# 各サブコマンドの使用例（サブパーサ -h の epilog）。
+_EXAMPLES: dict[str, str] = {
+    "validate": "例:\n  juice manifest validate -f juice.yaml",
+    "lock": "例:\n  juice lock -f juice.yaml -o juice.lock",
+    "plan": "例:\n  juice plan -f juice.yaml --lock juice.lock",
+    "apply": (
+        "例:\n"
+        "  juice apply -f juice.yaml                 # registries へ反映\n"
+        "  juice apply -f juice.yaml --dry-run       # 変更予定だけ表示\n"
+        "  juice apply -f juice.yaml --frozen        # lock と drift していたらエラー"
+    ),
+}
+
+
+def _raw(**kwargs):
+    """epilog 整形を保つサブパーサ用の共通 kwargs（RawDescriptionHelpFormatter）。"""
+    return {"formatter_class": argparse.RawDescriptionHelpFormatter, **kwargs}
+
 
 def _print_names(names: list[str], layer: str) -> None:
     if not names:
@@ -40,7 +71,10 @@ def _cmd_all(juice: Juice) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="juice", description="AI エージェントのパッケージマネージャー"
+        prog="juice",
+        description="AI エージェントのパッケージマネージャー",
+        epilog=_WORKFLOW_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     layer_subs = parser.add_subparsers(dest="layer", required=True, metavar="LAYER")
 
@@ -50,12 +84,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     mp = layer_subs.add_parser("manifest", help="宣言的 manifest（juice.yaml）を扱う")
     mp_subs = mp.add_subparsers(dest="action", required=True, metavar="ACTION")
-    vp = mp_subs.add_parser("validate", help="juice.yaml をパースして構造・参照を検証する")
+    vp = mp_subs.add_parser(
+        "validate",
+        help="juice.yaml をパースして構造・参照を検証する",
+        **_raw(epilog=_EXAMPLES["validate"]),
+    )
     vp.add_argument(
         "-f", "--file", default="juice.yaml", help="manifest のパス（既定: juice.yaml）"
     )
 
-    lp = layer_subs.add_parser("lock", help="juice.yaml を解決して juice.lock を冪等生成する")
+    lp = layer_subs.add_parser(
+        "lock",
+        help="juice.yaml を解決して juice.lock を冪等生成する",
+        **_raw(epilog=_EXAMPLES["lock"]),
+    )
     lp.add_argument(
         "-f", "--file", default="juice.yaml", help="manifest のパス（既定: juice.yaml）"
     )
@@ -65,7 +107,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("apply", "juice.yaml の desired state を registries へ冪等反映する"),
         ("plan", "apply を書き込まず実行し、行われる変更（差分）を表示する"),
     ):
-        sp = layer_subs.add_parser(verb, help=help_text)
+        sp = layer_subs.add_parser(verb, help=help_text, **_raw(epilog=_EXAMPLES[verb]))
         sp.add_argument(
             "-f", "--file", default="juice.yaml", help="manifest のパス（既定: juice.yaml）"
         )

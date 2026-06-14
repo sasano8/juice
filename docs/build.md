@@ -150,3 +150,23 @@ registries/<namespace>/
 juice mcp_bundled list
 juice all list
 ```
+
+## 宣言系コマンド（juice.yaml ライフサイクル）
+
+`bundle.yml`（mcp_bundled 単位）とは別に、`juice.yaml`（宣言的ワークスペース manifest）から
+レジストリを組み立てる宣言系コマンドがある（設計は [workspace.md](workspace.md)）。典型フロー:
+
+```bash
+juice manifest validate -f juice.yaml    # 構文・参照・version 制約を検証
+juice lock -f juice.yaml -o juice.lock   # 解決して juice.lock を冪等生成
+juice plan -f juice.yaml                 # 反映の差分を確認（書き込まない）
+juice apply -f juice.yaml                # registries/ へ反映（lock と drift 検査）
+```
+
+- **validate** … name の必須/重複・レイヤ間参照・`version`（SemVer）・`from: name@<制約>` を検査。
+- **lock** … manifest の解決結果＋`manifestDigest` を冪等に pin（外部 digest は未実装の TODO）。
+- **plan** … `apply --dry-run` 相当。`written`/`pruned` の差分のみ表示。
+- **apply** … 依存順に materialize し、宣言にない既存パッケージは prune（冪等）。
+  `--no-prune` / `--dry-run` / `--frozen`（drift でエラー）/ `--require-lock`（lock 必須）。
+
+各コマンドの例は `juice <cmd> -h`、全体像は `juice -h` で確認できる。

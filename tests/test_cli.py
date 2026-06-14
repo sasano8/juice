@@ -134,6 +134,28 @@ def test_parser_plan_flags() -> None:
     assert not hasattr(args, "dry_run")
 
 
+def test_toplevel_help_shows_workflow_examples() -> None:
+    help_text = build_parser().format_help()
+    assert "juice manifest validate" in help_text
+    assert "juice lock" in help_text
+    assert "juice apply" in help_text
+
+
+@pytest.mark.parametrize(
+    "argv,needle",
+    [
+        (["lock", "-h"], "juice lock -f juice.yaml -o juice.lock"),
+        (["plan", "-h"], "juice plan -f juice.yaml"),
+        (["apply", "-h"], "juice apply -f juice.yaml --dry-run"),
+        (["manifest", "validate", "-h"], "juice manifest validate -f juice.yaml"),
+    ],
+)
+def test_subcommand_help_has_example(argv, needle, capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        main(argv)
+    assert needle in capsys.readouterr().out
+
+
 def test_main_apply_reports_error(tmp_path, capsys: pytest.CaptureFixture[str]) -> None:
     # 不正な manifest は registries に触れる前に弾かれる（実レジストリ非依存）。
     src = tmp_path / "juice.yaml"
