@@ -11,8 +11,8 @@ from __future__ import annotations
 import argparse
 import sys
 
-from .config import ALL_ORDER, LAYERS, Config
-from .factory import create_registry
+from ..config import ALL_ORDER, LAYERS, Config
+from ..factory import create_registry
 
 
 def _cmd_list(registry, layer: str) -> int:
@@ -38,7 +38,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="juice", description="AI エージェントのパッケージマネージャー")
     layer_subs = parser.add_subparsers(dest="layer", required=True, metavar="LAYER")
 
-    layer_subs.add_parser("all", help="全レイヤを依存順に一覧表示する")
+    ap = layer_subs.add_parser("all", help="全レイヤを依存順に一覧表示する")
+    ap_subs = ap.add_subparsers(dest="action", required=True, metavar="ACTION")
+    ap_subs.add_parser("list", help="全レイヤ一覧を表示する")
 
     for layer in LAYERS:
         lp = layer_subs.add_parser(layer, help=f"{layer} パッケージを操作する")
@@ -52,10 +54,9 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     registry = create_registry(Config())
 
-    if args.layer == "all":
-        return _cmd_all(registry)
-
     if args.action == "list":
+        if args.layer == "all":
+            return _cmd_all(registry)
         return _cmd_list(registry, args.layer)
 
     print(f"unknown action: {args.action}", file=sys.stderr)
