@@ -165,6 +165,32 @@ def test_main_apply_reports_error(tmp_path, capsys: pytest.CaptureFixture[str]) 
     assert "invalid manifest" in capsys.readouterr().err
 
 
+def test_error_includes_file_path_and_hint(tmp_path, capsys: pytest.CaptureFixture[str]) -> None:
+    p = tmp_path / "juice.yaml"
+    p.write_text("apiVersion: juice/v2\n", encoding="utf-8")
+    rc = main(["manifest", "validate", "-f", str(p)])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert str(p) in err  # どのファイルで失敗したか
+    assert "ヒント" in err  # 次の一手
+
+
+def test_missing_file_error_has_hint(tmp_path, capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(["manifest", "validate", "-f", str(tmp_path / "nope.yaml")])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "見つかりません" in err
+    assert "ヒント" in err
+
+
+def test_yaml_syntax_error_reports_line(tmp_path, capsys: pytest.CaptureFixture[str]) -> None:
+    p = tmp_path / "juice.yaml"
+    p.write_text("apiVersion: [unclosed\n", encoding="utf-8")  # 壊れた flow sequence
+    rc = main(["manifest", "validate", "-f", str(p)])
+    assert rc == 1
+    assert "line" in capsys.readouterr().err  # PyYAML の行情報が出る
+
+
 def test_print_names_empty_reports_to_stderr(capsys: pytest.CaptureFixture[str]) -> None:
     _print_names([], "instance")
     captured = capsys.readouterr()

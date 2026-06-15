@@ -265,13 +265,34 @@ def _cmd_run(
     return _exec(juice.run(name, mode=mode, image=tag, env_file=env_file)["command"])
 
 
+def _fail(msg: str) -> int:
+    """エラーを stderr に出して exit code 1 を返す（CLI 失敗の共通経路）。"""
+    print(msg, file=sys.stderr)
+    return 1
+
+
+def _hint(message: str) -> str:
+    """よくある失敗に「次の一手」のヒントを添える（無ければ空）。"""
+    if "見つかりません" in message:
+        return "\n  ヒント: パスを確認してください（-f でファイルを指定）。"
+    if "apiVersion" in message:
+        return "\n  ヒント: 対応する apiVersion は juice/v1 です。"
+    if "YAML として解釈できません" in message:
+        return "\n  ヒント: インデントや記号など YAML 構文を確認してください。"
+    return ""
+
+
+def _fail_manifest(file: str, e: ManifestError) -> int:
+    """manifest エラーをファイルパス＋ヒント付きで報告する。"""
+    return _fail(f"invalid manifest ({file}): {e}{_hint(str(e))}")
+
+
 def _cmd_manifest_validate(file: str) -> int:
     """juice.yaml をパース・検証し、要約を表示する（不正なら 1）。"""
     try:
         manifest = load_manifest(file)
     except ManifestError as e:
-        print(f"invalid manifest: {e}", file=sys.stderr)
-        return 1
+        return _fail_manifest(file, e)
     print(f"ok: {file} (apiVersion={manifest.api_version}, namespace={manifest.namespace})")
     for layer in ("mcp_servers", "subagents", "skills", "mcp_bundled", "instances"):
         names = manifest.names(layer)
@@ -285,8 +306,7 @@ def _cmd_lock(file: str, out: str) -> int:
     try:
         result = write_lock(file, out)
     except ManifestError as e:
-        print(f"invalid manifest: {e}", file=sys.stderr)
-        return 1
+        return _fail_manifest(file, e)
     print(f"locked: {out} ({result['manifestDigest']})")
     for layer in ("mcp_servers", "instances"):
         if result[layer]:
@@ -306,10 +326,10 @@ def _cmd_apply(args) -> int:
             frozen=args.frozen,
             require_lock=args.require_lock,
         )
-    except (ManifestError, LockError) as e:
-        kind = "invalid manifest" if isinstance(e, ManifestError) else "lock error"
-        print(f"{kind}: {e}", file=sys.stderr)
-        return 1
+    except ManifestError as e:
+        return _fail_manifest(args.file, e)
+    except LockError as e:
+        return _fail(f"lock error: {e}")
     tag = "(plan) " if dry_run else ""
     print(
         f"{tag}namespace={result['namespace']}: "
