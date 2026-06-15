@@ -40,6 +40,7 @@ _EXAMPLES: dict[str, str] = {
         "  juice apply -f juice.yaml --dry-run       # 変更予定だけ表示\n"
         "  juice apply -f juice.yaml --frozen        # lock と drift していたらエラー"
     ),
+    "registry-verify": "例:\n  juice registry verify    # name とディレクトリ名の一致を検査",
 }
 
 
@@ -68,6 +69,18 @@ def _cmd_all(juice: Juice) -> int:
         _print_names(names, layer)
         print()
     return 0
+
+
+def _cmd_registry_verify(juice: Juice) -> int:
+    """registry の name とディレクトリ名の一致を検証する（不一致があれば 1）。"""
+    issues = juice.verify_names()
+    if not issues:
+        print("ok: registry の name とディレクトリ名は一致しています")
+        return 0
+    print(f"{len(issues)} 件の name 不一致が見つかりました:", file=sys.stderr)
+    for issue in issues:
+        print(f"  - {issue.message()}", file=sys.stderr)
+    return 1
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -107,6 +120,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--resolve-digests",
         action="store_true",
         help="外部パッケージ（npm）の digest を取得して lock に記録する（要ネットワーク）",
+    )
+
+    rgp = layer_subs.add_parser("registry", help="registries（生成物）を検査する")
+    rgp_subs = rgp.add_subparsers(dest="action", required=True, metavar="ACTION")
+    rgp_subs.add_parser(
+        "verify",
+        help="各パッケージの name がディレクトリ名と一致するか検証する",
+        **_raw(epilog=_EXAMPLES["registry-verify"]),
     )
 
     for verb, help_text in (
@@ -362,6 +383,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.layer == "manifest" and args.action == "validate":
         return _cmd_manifest_validate(args.file)
+
+    if args.layer == "registry" and args.action == "verify":
+        return _cmd_registry_verify(Juice())
 
     if args.action == "list":
         juice = Juice()

@@ -28,6 +28,13 @@ def test_parser_run_defaults_to_api() -> None:
     assert args.mode == "api"
 
 
+def test_registry_verify_ok_on_real_registry(capsys: pytest.CaptureFixture[str]) -> None:
+    # 同梱の registries/default は name とディレクトリ名が一致しているので 0。
+    rc = main(["registry", "verify"])
+    assert rc == 0
+    assert "ok" in capsys.readouterr().out
+
+
 def test_parser_run_rejects_unknown_mode() -> None:
     with pytest.raises(SystemExit):
         build_parser().parse_args(["mcp_bundled", "run", "weather-bot", "bogus"])

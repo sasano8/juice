@@ -26,6 +26,7 @@ from .manifest import (
     load_manifest,
     parse_manifest,
 )
+from .metadata import NameIssue, extract_name, parse_metadata, verify_names
 from .registry import Registry, RegistryArray
 from .semver import SemverError, Version, is_valid, parse_version, satisfies
 from .storage import LocalStorage, Storage
@@ -52,6 +53,10 @@ __all__ = [
     "DigestResolver",
     "npm_digest",
     "null_resolver",
+    "NameIssue",
+    "parse_metadata",
+    "extract_name",
+    "verify_names",
     "apply_manifest",
     "Version",
     "SemverError",
@@ -82,6 +87,13 @@ class Juice:
     def list_all(self) -> dict[str, list[str]]:
         """全レイヤを依存順（ALL_ORDER）に並べた {レイヤ: 名前リスト} を返す。"""
         return self.registries.list_all()
+
+    def verify_names(self) -> list[NameIssue]:
+        """registry 内の各パッケージで name とディレクトリ名の一致を検証する（E004）。
+
+        不一致（name 欠落 / dir と不一致）を列挙して返す。自動修正はしない。
+        """
+        return verify_names(self.registries)
 
     def apply(
         self,
