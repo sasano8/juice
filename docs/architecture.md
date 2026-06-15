@@ -161,5 +161,13 @@ flowchart TB
 > **宣言パイプライン上の位置づけ（E001 第一歩）:** workflow は `juice.yaml` の `workflows:` で宣言でき、
 > `apply` が `workflows/<name>/index.md`（frontmatter: kind/name/type/schedule/steps）へ materialize する
 > （`src/core/manifest.py` の `WorkflowSpec` / `apply.py` の `_workflow`）。validate は `steps[].mcp_bundled`
-> の参照不整合を検出する。**現状は宣言→materialize まで**で、複数 instance の協調実行・スケジューラは未実装
-> （別サイクル）。lock は workflow を pin しない（spec のみ。必要になってから）。
+> の参照不整合を検出する。lock は workflow を pin しない（spec のみ。drift は `manifestDigest` が自動カバー）。
+>
+> **実行モデル（E001 第二歩）:** juice は workflow を **実行しない**。workflow 宣言から、実行基盤が食える
+> **デプロイ成果物を生成**する（`src/core/deploy.py` / CLI `juice workflow build <name>`）。
+> 「juice = 宣言から生成、常駐・協調・監視は外部基盤に委譲」がコア（`apply` が registries を、`build` が
+> image を生成するのと同型）。**target は pluggable で最初の実装は docker-compose**：
+> `deploy/<name>/docker-compose.yml` を生成し、各 step の mcp_bundled image（規約 `juice/<name>[:version]`）を
+> 長期常駐 service（`restart: unless-stopped`）にする。`input` は環境変数、`schedule` は label（compose に
+> cron は無く、外部スケジューラ/k8s CronJob 用のメタ）。`docker compose up` や k8s manifest 化＋ArgoCD 連携、
+> 実起動・スケジューラ・並行制御は次段階（YAGNI。現状は **生成のみ**）。

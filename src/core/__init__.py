@@ -10,6 +10,7 @@ from __future__ import annotations
 from . import bundle as _bundle
 from .apply import apply_manifest
 from .config import ALL_ORDER, LAYERS, Config
+from .deploy import build_deployment, write_deployment
 from .factory import create_registries, create_registry, create_storage
 from .index import build_index, index_status, write_index
 from .lock import (
@@ -66,6 +67,8 @@ __all__ = [
     "build_index",
     "write_index",
     "index_status",
+    "build_deployment",
+    "write_deployment",
     "apply_manifest",
     "Version",
     "SemverError",

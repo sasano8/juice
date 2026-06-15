@@ -13,7 +13,15 @@ import sys
 
 import yaml
 
-from ..core import LAYERS, Juice, LockError, ManifestError, load_manifest, write_lock
+from ..core import (
+    LAYERS,
+    Juice,
+    LockError,
+    ManifestError,
+    load_manifest,
+    write_deployment,
+    write_lock,
+)
 
 # 宣言ライフサイクル（juice.yaml）の典型フロー。トップレベル -h の epilog に出す。
 _WORKFLOW_EPILOG = """\
@@ -43,6 +51,9 @@ _EXAMPLES: dict[str, str] = {
         "例:\n  juice registry verify    # name=dir 一致＋OKF 適合＋索引 drift を検査"
     ),
     "registry-index": "例:\n  juice registry index -o juice.index.yml   # メタデータ索引を生成",
+    "workflow-build": (
+        "例:\n  juice workflow build morning-brief    # deploy/<name>/docker-compose.yml を生成"
+    ),
 }
 
 
@@ -197,6 +208,20 @@ def build_parser() -> argparse.ArgumentParser:
         lp = layer_subs.add_parser(layer, help=f"{layer} パッケージを操作する")
         action_subs = lp.add_subparsers(dest="action", required=True, metavar="ACTION")
         action_subs.add_parser("list", help=f"{layer} 一覧を表示する")
+        if layer == "workflow":
+            wbp = action_subs.add_parser(
+                "build",
+                help="workflow からデプロイ成果物（docker-compose.yml）を生成する",
+                **_raw(epilog=_EXAMPLES["workflow-build"]),
+            )
+            wbp.add_argument("name", help="workflow 名")
+            wbp.add_argument(
+                "-f", "--file", default="juice.yaml", help="manifest のパス（既定: juice.yaml）"
+            )
+            wbp.add_argument(
+                "-o", "--out", default="deploy", help="出力ルート（既定: deploy/<name>/）"
+            )
+            wbp.add_argument("--target", default="compose", help="実行基盤 target（既定: compose）")
         if layer == "mcp_bundled":
             ip = action_subs.add_parser(
                 "init", help="bundle.yml の雛形を生成して成果物を初期化する"
@@ -375,6 +400,22 @@ def _cmd_lock(file: str, out: str) -> int:
     return 0
 
 
+def _cmd_workflow_build(name: str, file: str, out: str, target: str) -> int:
+    """workflow からデプロイ成果物（docker-compose.yml 等）を生成する（不正なら 1）。"""
+    try:
+        manifest = load_manifest(file)
+    except ManifestError as e:
+        return _fail_manifest(file, e)
+    try:
+        result = write_deployment(manifest, name, out_dir=out, target=target)
+    except KeyError:
+        return _fail(f"workflow が見つかりません: {name}（{file} に workflows で宣言してください）")
+    except ValueError as e:  # 未対応 target
+        return _fail(str(e))
+    print(f"deployed: {result['out']} (target={result['target']}, {result['services']} services)")
+    return 0
+
+
 def _cmd_apply(args) -> int:
     """juice.yaml を registries へ反映（plan は dry-run）。不正・lock 違反なら 1。"""
     dry_run = args.layer == "plan" or getattr(args, "dry_run", False)
@@ -434,6 +475,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.action == "bundle":
         return _cmd_bundle(args.name, args.namespace)
+
+    if args.layer == "workflow" and args.action == "build":
+        return _cmd_workflow_build(args.name, args.file, args.out, args.target)
 
     if args.action == "build":
         return _cmd_build(args.name, args.namespace, args.tag)
