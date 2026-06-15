@@ -21,6 +21,7 @@ from ..core import (
     load_manifest,
     write_deployment,
     write_lock,
+    write_schedule_deployment,
 )
 
 # 宣言ライフサイクル（juice.yaml）の典型フロー。トップレベル -h の epilog に出す。
@@ -52,8 +53,9 @@ _EXAMPLES: dict[str, str] = {
     ),
     "registry-index": "例:\n  juice registry index -o juice.index.yml   # メタデータ索引を生成",
     "workflow-build": (
-        "例:\n  juice workflow build morning-brief    # deploy/<name>/docker-compose.yml を生成"
+        "例:\n  juice workflow build live-bots    # deploy/<name>/docker-compose.yml（常駐）を生成"
     ),
+    "schedule-build": ("例:\n  juice schedule build morning-brief --target k8s   # CronJob を生成"),
 }
 
 
@@ -174,6 +176,20 @@ def build_parser() -> argparse.ArgumentParser:
     rip.add_argument(
         "-o", "--out", default="juice.index.yml", help="出力先（既定: juice.index.yml）"
     )
+
+    scp = layer_subs.add_parser("schedule", help="定期実行（schedule）のデプロイ成果物を生成する")
+    scp_subs = scp.add_subparsers(dest="action", required=True, metavar="ACTION")
+    sbp = scp_subs.add_parser(
+        "build",
+        help="schedule からデプロイ成果物（k8s CronJob 等）を生成する",
+        **_raw(epilog=_EXAMPLES["schedule-build"]),
+    )
+    sbp.add_argument("name", help="schedule 名")
+    sbp.add_argument(
+        "-f", "--file", default="juice.yaml", help="manifest のパス（既定: juice.yaml）"
+    )
+    sbp.add_argument("-o", "--out", default="deploy", help="出力ルート（既定: deploy/<name>/）")
+    sbp.add_argument("--target", default="compose", help="実行基盤 target（既定: compose）")
 
     for verb, help_text in (
         ("apply", "juice.yaml の desired state を registries へ冪等反映する"),
@@ -416,6 +432,22 @@ def _cmd_workflow_build(name: str, file: str, out: str, target: str) -> int:
     return 0
 
 
+def _cmd_schedule_build(name: str, file: str, out: str, target: str) -> int:
+    """schedule からデプロイ成果物（CronJob 等）を生成する（不正なら 1）。"""
+    try:
+        manifest = load_manifest(file)
+    except ManifestError as e:
+        return _fail_manifest(file, e)
+    try:
+        result = write_schedule_deployment(manifest, name, out_dir=out, target=target)
+    except KeyError:
+        return _fail(f"schedule が見つかりません: {name}（{file} に schedules で宣言してください）")
+    except ValueError as e:  # 未対応 target
+        return _fail(str(e))
+    print(f"deployed: {result['out']} (target={result['target']}, {result['services']} services)")
+    return 0
+
+
 def _cmd_apply(args) -> int:
     """juice.yaml を registries へ反映（plan は dry-run）。不正・lock 違反なら 1。"""
     dry_run = args.layer == "plan" or getattr(args, "dry_run", False)
@@ -478,6 +510,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.layer == "workflow" and args.action == "build":
         return _cmd_workflow_build(args.name, args.file, args.out, args.target)
+
+    if args.layer == "schedule" and args.action == "build":
+        return _cmd_schedule_build(args.name, args.file, args.out, args.target)
 
     if args.action == "build":
         return _cmd_build(args.name, args.namespace, args.tag)

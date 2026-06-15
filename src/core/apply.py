@@ -176,9 +176,8 @@ def _instance(i: InstanceSpec) -> str:
 
 def _workflow(w: WorkflowSpec) -> str:
     # workflow は .md concept doc。`type` は OKF 必須、`kind` は juice 分類（metadata.verify_okf）。
+    # workflow は常駐サービス群の定義（時間非依存）。schedule は別概念（ScheduleSpec）の持ち物。
     meta: dict = {"kind": "workflow", "name": w.name, "type": "workflow"}
-    if w.schedule:
-        meta["schedule"] = w.schedule
     meta["steps"] = [
         {"mcp_bundled": s.mcp_bundled, **({"input": dict(s.input)} if s.input else {})}
         for s in w.steps

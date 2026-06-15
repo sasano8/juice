@@ -150,13 +150,12 @@ def test_materialized_skill_has_okf_type(regs):
     assert "type: skill" in text  # OKF 必須の concept type
 
 
-# workflow（E001 第一歩）を加えた manifest。base の weather-bot bundle を協調する。
+# workflow（常駐サービス群）を加えた manifest。base の weather-bot bundle を協調する。
 MANIFEST_WITH_WORKFLOW = (
     MANIFEST
     + """
 workflows:
-  - name: morning-brief
-    schedule: "0 7 * * *"
+  - name: weather-service
     steps:
       - mcp_bundled: weather-bot
         input:
@@ -167,12 +166,12 @@ workflows:
 
 def test_apply_materializes_workflow(regs):
     r = apply_manifest(regs, parse_manifest(MANIFEST_WITH_WORKFLOW))
-    assert "workflow/morning-brief" in r["written"]
-    assert regs.exists("workflow", "morning-brief")
-    text = regs.read("workflow", "morning-brief")
+    assert "workflow/weather-service" in r["written"]
+    assert regs.exists("workflow", "weather-service")
+    text = regs.read("workflow", "weather-service")
     assert "kind: workflow" in text
     assert "type: workflow" in text  # OKF 必須の concept type
-    assert "schedule:" in text
+    assert "schedule:" not in text  # schedule は workflow の持ち物ではない（別概念）
     assert "mcp_bundled: weather-bot" in text
     assert "city: Tokyo" in text
 

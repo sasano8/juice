@@ -97,7 +97,7 @@ class InstanceSpec:
 
 @dataclass
 class WorkflowStep:
-    """workflow の 1 ステップ。指定 mcp_bundled を input 付きで起動する。"""
+    """1 ステップ。指定 mcp_bundled を input 付きで動かす（workflow / schedule で共用）。"""
 
     mcp_bundled: str
     input: dict = field(default_factory=dict)
@@ -105,11 +105,27 @@ class WorkflowStep:
 
 @dataclass
 class WorkflowSpec:
-    """協調層：複数 mcp_bundled（→ instance）の実行手順を宣言する（実行は後続レイヤ）。"""
+    """協調層：複数 mcp_bundled を**常駐**させる定義（時間非依存）。
+
+    「何を・どう動かすか」だけを持つ。「いつ定期実行するか」は別概念 [ScheduleSpec] の責務
+    （定義とトリガの分離。k8s の Job↔CronJob、Argo の WorkflowTemplate↔CronWorkflow と同型）。
+    """
 
     name: str
     steps: list[WorkflowStep] = field(default_factory=list)
-    schedule: str | None = None  # 任意。cron 式（例: "0 7 * * *"）
+    version: str | None = None
+
+
+@dataclass
+class ScheduleSpec:
+    """スケジューラの持ち物：`schedule`（cron）で steps を**定期実行**するトリガ宣言。
+
+    workflow と違い `schedule` を必須で持つ（定期実行＝有限ジョブ）。steps の形は workflow と共用。
+    """
+
+    name: str
+    schedule: str  # cron 式（必須。例: "0 7 * * *"）
+    steps: list[WorkflowStep] = field(default_factory=list)
     version: str | None = None
 
 
@@ -125,6 +141,7 @@ class Manifest:
     mcp_bundled: list[McpBundledSpec] = field(default_factory=list)
     instances: list[InstanceSpec] = field(default_factory=list)
     workflows: list[WorkflowSpec] = field(default_factory=list)
+    schedules: list[ScheduleSpec] = field(default_factory=list)
 
     def names(self, layer: str) -> list[str]:
         """指定レイヤ（複数形キー）に含まれるリソース名の一覧を返す。"""
@@ -173,6 +190,7 @@ def parse_manifest(text: str) -> Manifest:
         mcp_bundled=[_parse_mcp_bundled(it) for it in _items(raw, "mcp_bundled")],
         instances=[_parse_instance(it) for it in _items(raw, "instances")],
         workflows=[_parse_workflow(it) for it in _items(raw, "workflows")],
+        schedules=[_parse_schedule(it) for it in _items(raw, "schedules")],
     )
     _validate(manifest)
     return manifest
@@ -284,17 +302,30 @@ def _parse_instance(item: dict) -> InstanceSpec:
 
 def _parse_workflow(item: dict) -> WorkflowSpec:
     name = _require_name(item, "workflows")
-    steps = [_parse_workflow_step(s, name) for s in _sub_items(item, "steps", "workflows", name)]
+    steps = [_parse_step(s, name, "workflow") for s in _sub_items(item, "steps", "workflows", name)]
     return WorkflowSpec(
         name=name,
         steps=steps,
-        schedule=_opt_str(item, "schedule", "workflows", name),
         version=_opt_version(item, "workflows", name),
     )
 
 
-def _parse_workflow_step(item: dict, owner: str) -> WorkflowStep:
-    where = f"workflow '{owner}' の steps[]"
+def _parse_schedule(item: dict) -> ScheduleSpec:
+    name = _require_name(item, "schedules")
+    schedule = item.get("schedule")
+    if not schedule or not isinstance(schedule, str):
+        raise ManifestError(f"schedule '{name}' に schedule（cron 文字列）が必要です")
+    steps = [_parse_step(s, name, "schedule") for s in _sub_items(item, "steps", "schedules", name)]
+    return ScheduleSpec(
+        name=name,
+        schedule=schedule,
+        steps=steps,
+        version=_opt_version(item, "schedules", name),
+    )
+
+
+def _parse_step(item: dict, owner: str, kind: str) -> WorkflowStep:
+    where = f"{kind} '{owner}' の steps[]"
     if not isinstance(item, dict):
         raise ManifestError(f"{where} の各要素はマッピングである必要があります")
     bundled = item.get("mcp_bundled")
@@ -315,7 +346,15 @@ def _parse_workflow_step(item: dict, owner: str) -> WorkflowStep:
 
 def _validate(m: Manifest) -> None:
     """レイヤ内の名前重複と、レイヤ間の参照解決を検証する。"""
-    for layer in ("mcp_servers", "subagents", "skills", "mcp_bundled", "instances", "workflows"):
+    for layer in (
+        "mcp_servers",
+        "subagents",
+        "skills",
+        "mcp_bundled",
+        "instances",
+        "workflows",
+        "schedules",
+    ):
         _check_unique(m.names(layer), layer)
 
     servers = set(m.names("mcp_servers"))
@@ -357,6 +396,13 @@ def _validate(m: Manifest) -> None:
             if step.mcp_bundled not in bundles:
                 raise ManifestError(
                     f"workflow '{wf.name}': 未定義の mcp_bundled を参照: {step.mcp_bundled}"
+                )
+
+    for sch in m.schedules:
+        for step in sch.steps:
+            if step.mcp_bundled not in bundles:
+                raise ManifestError(
+                    f"schedule '{sch.name}': 未定義の mcp_bundled を参照: {step.mcp_bundled}"
                 )
 
 

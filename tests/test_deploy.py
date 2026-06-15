@@ -1,4 +1,4 @@
-"""workflow デプロイ成果物生成（deploy.py / E001 第二歩）のテスト。"""
+"""workflow / schedule デプロイ成果物生成（deploy.py / E001）のテスト。"""
 
 from __future__ import annotations
 
@@ -11,8 +11,13 @@ from src.core.deploy import (
     build_compose,
     build_deployment,
     build_k8s,
+    build_schedule_compose,
+    build_schedule_deployment,
+    build_schedule_k8s,
+    find_schedule,
     find_workflow,
     write_deployment,
+    write_schedule_deployment,
 )
 from src.core.manifest import parse_manifest
 
@@ -23,13 +28,19 @@ mcp_bundled:
     version: 0.0.1
   - name: news-bot
 workflows:
+  - name: live-bots
+    steps:
+      - mcp_bundled: weather-bot
+        input:
+          city: "Tokyo"
+      - mcp_bundled: news-bot
+schedules:
   - name: morning-brief
     schedule: "0 7 * * *"
     steps:
       - mcp_bundled: weather-bot
         input:
           city: "Tokyo"
-      - mcp_bundled: news-bot
 """
 
 
@@ -37,46 +48,47 @@ def _manifest():
     return parse_manifest(MANIFEST)
 
 
+# --- workflow（常駐サービス群） -------------------------------------------------
+
+
 def test_build_compose_structure():
     m = _manifest()
-    compose = build_compose(m, find_workflow(m, "morning-brief"))
-    assert compose["name"] == "morning-brief"
+    compose = build_compose(m, find_workflow(m, "live-bots"))
+    assert compose["name"] == "live-bots"
     svc = compose["services"]["weather-bot"]
-    assert svc["image"] == "juice/weather-bot:0.0.1"  # version があれば tag を付ける
-    assert svc["restart"] == "unless-stopped"  # 長期常駐
+    assert svc["image"] == "juice/weather-bot:0.0.1"  # version があれば tag
+    assert svc["restart"] == "unless-stopped"  # 常駐
     assert svc["environment"] == {"city": "Tokyo"}  # input は環境変数
-    assert svc["labels"]["juice.workflow"] == "morning-brief"
-    assert svc["labels"]["juice.schedule"] == "0 7 * * *"  # cron はメタとして label に
+    assert svc["labels"] == {"juice.workflow": "live-bots"}
+    assert "juice.schedule" not in svc["labels"]  # workflow は schedule を持たない
 
 
 def test_build_compose_image_without_version():
     m = _manifest()
-    compose = build_compose(m, find_workflow(m, "morning-brief"))
-    # version 未指定の bundle は tag なしの規約名。
+    compose = build_compose(m, find_workflow(m, "live-bots"))
     assert compose["services"]["news-bot"]["image"] == "juice/news-bot"
 
 
 def test_build_deployment_compose_filename_and_header():
     m = _manifest()
-    filename, text = build_deployment(m, find_workflow(m, "morning-brief"))
+    filename, text = build_deployment(m, find_workflow(m, "live-bots"))
     assert filename == "docker-compose.yml"
     assert text.startswith("# 生成物")
-    # YAML として読め、services を 2 つ持つ。
     data = yaml.safe_load(text)
     assert set(data["services"]) == {"weather-bot", "news-bot"}
 
 
 def test_build_deployment_is_deterministic():
     m = _manifest()
-    a = build_deployment(m, find_workflow(m, "morning-brief"))
-    b = build_deployment(m, find_workflow(m, "morning-brief"))
-    assert a == b
+    assert build_deployment(m, find_workflow(m, "live-bots")) == build_deployment(
+        m, find_workflow(m, "live-bots")
+    )
 
 
 def test_unknown_target_errors():
     m = _manifest()
     with pytest.raises(ValueError, match="未対応の target"):
-        build_deployment(m, find_workflow(m, "morning-brief"), target="nomad")
+        build_deployment(m, find_workflow(m, "live-bots"), target="nomad")
 
 
 def test_find_workflow_missing():
@@ -87,11 +99,11 @@ def test_find_workflow_missing():
 def test_write_deployment_path_and_idempotent(tmp_path: Path):
     m = _manifest()
     out = str(tmp_path / "deploy")
-    r1 = write_deployment(m, "morning-brief", out_dir=out)
-    assert r1["out"] == str(tmp_path / "deploy" / "morning-brief" / "docker-compose.yml")
+    r1 = write_deployment(m, "live-bots", out_dir=out)
+    assert r1["out"] == str(tmp_path / "deploy" / "live-bots" / "docker-compose.yml")
     assert r1["services"] == 2
     first = Path(r1["out"]).read_text(encoding="utf-8")
-    write_deployment(m, "morning-brief", out_dir=out)
+    write_deployment(m, "live-bots", out_dir=out)
     assert Path(r1["out"]).read_text(encoding="utf-8") == first  # 冪等
 
 
@@ -106,27 +118,23 @@ def test_duplicate_bundle_steps_get_unique_service_names():
     assert set(compose["services"]) == {"bot", "bot-2"}
 
 
-# --- k8s target（E001 第三歩） -------------------------------------------------
-
-MANIFEST_NO_SCHEDULE = """\
-apiVersion: juice/v1
-mcp_bundled:
-  - name: weather-bot
-    version: 0.0.1
-workflows:
-  - name: daemon-brief
-    steps:
-      - mcp_bundled: weather-bot
-        input:
-          city: "Tokyo"
-"""
+def test_workflow_k8s_is_deployment():
+    m = _manifest()
+    docs = build_k8s(m, find_workflow(m, "live-bots"))
+    assert {d["kind"] for d in docs} == {"Deployment"}
+    dep = docs[0]
+    assert dep["apiVersion"] == "apps/v1"
+    assert dep["spec"]["replicas"] == 1
+    assert dep["metadata"]["name"] == "live-bots-weather-bot"
 
 
-def test_k8s_cronjob_when_scheduled():
-    m = _manifest()  # morning-brief は schedule あり
-    docs = build_k8s(m, find_workflow(m, "morning-brief"))
-    kinds = {d["kind"] for d in docs}
-    assert kinds == {"CronJob"}
+# --- schedule（定期実行のトリガ） -----------------------------------------------
+
+
+def test_schedule_k8s_is_cronjob():
+    m = _manifest()
+    docs = build_schedule_k8s(m, find_schedule(m, "morning-brief"))
+    assert {d["kind"] for d in docs} == {"CronJob"}
     cj = docs[0]
     assert cj["apiVersion"] == "batch/v1"
     assert cj["metadata"]["name"] == "morning-brief-weather-bot"
@@ -136,38 +144,32 @@ def test_k8s_cronjob_when_scheduled():
     assert container["env"] == [{"name": "city", "value": "Tokyo"}]
 
 
-def test_k8s_deployment_when_no_schedule():
-    m = parse_manifest(MANIFEST_NO_SCHEDULE)
-    docs = build_k8s(m, find_workflow(m, "daemon-brief"))
-    assert len(docs) == 1
-    dep = docs[0]
-    assert dep["kind"] == "Deployment"
-    assert dep["apiVersion"] == "apps/v1"
-    assert dep["spec"]["replicas"] == 1
-    assert dep["spec"]["selector"]["matchLabels"] == {"app": "weather-bot"}
-    container = dep["spec"]["template"]["spec"]["containers"][0]
-    assert container["image"] == "juice/weather-bot:0.0.1"
-
-
-def test_build_deployment_k8s_filename_and_multidoc():
-    m = parse_manifest(MANIFEST_NO_SCHEDULE)
-    filename, text = build_deployment(m, find_workflow(m, "daemon-brief"), target="k8s")
-    assert filename == "manifests.yaml"
-    assert text.startswith("# 生成物")
-    docs = list(yaml.safe_load_all(text))
-    assert [d["kind"] for d in docs] == ["Deployment"]
-
-
-def test_k8s_is_deterministic():
+def test_schedule_compose_is_oneshot():
     m = _manifest()
-    a = build_deployment(m, find_workflow(m, "morning-brief"), target="k8s")
-    b = build_deployment(m, find_workflow(m, "morning-brief"), target="k8s")
-    assert a == b
+    compose = build_schedule_compose(m, find_schedule(m, "morning-brief"))
+    svc = compose["services"]["weather-bot"]
+    assert svc["restart"] == "no"  # cron が無いので自動起動しない
+    assert svc["profiles"] == ["scheduled"]
+    assert svc["labels"]["juice.schedule"] == "0 7 * * *"
+    assert svc["labels"]["juice.scheduled"] == "morning-brief"
 
 
-def test_write_deployment_k8s_target(tmp_path: Path):
-    m = parse_manifest(MANIFEST_NO_SCHEDULE)
+def test_build_schedule_deployment_k8s_filename():
+    m = _manifest()
+    filename, text = build_schedule_deployment(m, find_schedule(m, "morning-brief"), target="k8s")
+    assert filename == "manifests.yaml"
+    docs = list(yaml.safe_load_all(text))
+    assert [d["kind"] for d in docs] == ["CronJob"]
+
+
+def test_write_schedule_deployment(tmp_path: Path):
+    m = _manifest()
     out = str(tmp_path / "deploy")
-    r = write_deployment(m, "daemon-brief", out_dir=out, target="k8s")
-    assert r["out"].endswith("deploy/daemon-brief/manifests.yaml")
+    r = write_schedule_deployment(m, "morning-brief", out_dir=out, target="k8s")
+    assert r["out"].endswith("deploy/morning-brief/manifests.yaml")
     assert r["target"] == "k8s"
+
+
+def test_find_schedule_missing():
+    with pytest.raises(KeyError):
+        find_schedule(_manifest(), "ghost")

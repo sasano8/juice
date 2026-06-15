@@ -1,17 +1,20 @@
-"""workflow のデプロイ成果物生成（E001 第二歩）。
+"""workflow / schedule のデプロイ成果物生成（E001）。
 
-juice は workflow を **実行しない**。workflow 宣言から、実行基盤（docker compose / 将来 k8s）が
-食える**デプロイ成果物を生成**するに留める。常駐・協調・監視は外部基盤（`docker compose up` /
-k8s＋ArgoCD 等）が担う。設計原則「宣言的＝spec から生成、生成物は焼かず再生成」に従う
-（`apply` が registries を、`build` が image を生成するのと同型）。
+juice は実行しない。宣言から実行基盤が食える**デプロイ成果物を生成**するに留め、常駐・協調・監視・
+定期実行は外部基盤（docker compose / k8s＋ArgoCD / 外部 cron）に委譲する（`apply`＝registries 生成、
+`build`＝image 生成と同型）。**target は pluggable**（`compose` / `k8s`）。
 
-- **mcp_bundled = image**（`bundle → build` で焼いた deployable な成果物）。
-- **workflow = デプロイ宣言**。各 step が参照する mcp_bundled image を、実行基盤の単位
-  （compose の service 等）へ写像し、長期常駐（`restart: unless-stopped`）させる成果物を生成する。
-- **target は pluggable**：docker-compose（`compose`）と Kubernetes manifest（`k8s`）。
+定義（何を動かすか）とトリガ（いつ動かすか）を分ける（k8s の Deployment↔CronJob、Argo の
+WorkflowTemplate↔CronWorkflow と同型）:
 
-`build_deployment` は同じ Manifest からは常に同じ (ファイル名, テキスト) を返す（決定的・冪等）。
-実起動・スケジューラ・並行制御は持たない（YAGNI。次段階）。
+- **workflow = 常駐サービス群の定義**（時間非依存）。compose service（`restart: unless-stopped`）/
+  k8s **Deployment**（replicas:1）として常駐させる。
+- **schedule = 定期実行のトリガ**（cron を持つ）。k8s **CronJob** として生成。
+  compose は cron 非対応なので自動起動しない one-shot service にする
+  （`restart: "no"`＋`profiles: [scheduled]`、外部 cron が起動。cron は label）。
+
+`build_*` は同じ Manifest からは常に同じ (ファイル名, テキスト) を返す（決定的・冪等）。
+実起動・スケジューラ稼働・step 協調は持たない（YAGNI。生成のみ）。
 """
 
 from __future__ import annotations
@@ -20,13 +23,12 @@ from pathlib import Path
 
 import yaml
 
-from .manifest import Manifest, McpBundledSpec, WorkflowSpec
+from .manifest import Manifest, McpBundledSpec, ScheduleSpec, WorkflowSpec
 
-# デプロイ成果物の既定の出力ルート（`deploy/<workflow>/<target ファイル>`）。
 DEPLOY_DIR = "deploy"
 DEFAULT_TARGET = "compose"
 
-_HEADER = "# 生成物。手で編集しない（`juice workflow build` で再生成）。\n"
+_HEADER = "# 生成物。手で編集しない（`juice workflow build` / `juice schedule build` で再生成）。\n"
 
 
 def find_workflow(manifest: Manifest, name: str) -> WorkflowSpec:
@@ -37,105 +39,144 @@ def find_workflow(manifest: Manifest, name: str) -> WorkflowSpec:
     raise KeyError(name)
 
 
+def find_schedule(manifest: Manifest, name: str) -> ScheduleSpec:
+    """manifest から名前で schedule を引く。無ければ KeyError。"""
+    for s in manifest.schedules:
+        if s.name == name:
+            return s
+    raise KeyError(name)
+
+
 def _image(bundle: McpBundledSpec) -> str:
     """mcp_bundled の image 名（規約 `juice/<name>`、version があれば tag を付ける）。"""
     base = f"juice/{bundle.name}"
     return f"{base}:{bundle.version}" if bundle.version else base
 
 
-def build_compose(manifest: Manifest, workflow: WorkflowSpec) -> dict:
-    """workflow を docker-compose（v2）の dict へ決定的に変換する。
-
-    各 step（mcp_bundled 参照）を 1 service にし、image は規約名、`input` は環境変数、
-    `schedule` は label に持たせる（compose に cron は無く外部スケジューラ用のメタ）。
-    service は長期常駐（`restart: unless-stopped`）。同一 bundle の複数 step は連番で衝突を避ける。
-    """
-    bundles = {b.name: b for b in manifest.mcp_bundled}
-    services: dict = {}
+def _named_steps(steps: list):
+    """(service 名, step) を決定的に列挙する。同一 mcp_bundled の複数 step は連番で衝突回避。"""
     used: dict[str, int] = {}
-    for step in workflow.steps:
-        bundle = bundles[step.mcp_bundled]  # parse 時に参照検証済み
+    for step in steps:
         svc = step.mcp_bundled
         used[svc] = used.get(svc, 0) + 1
         if used[svc] > 1:
             svc = f"{svc}-{used[svc]}"
-        service: dict = {"image": _image(bundle), "restart": "unless-stopped"}
+        yield svc, step
+
+
+def _env_list(step_input: dict) -> list[dict]:
+    """input を k8s env（[{name, value}]）へ。値は文字列化。"""
+    return [{"name": k, "value": str(v)} for k, v in step_input.items()]
+
+
+def _container(svc: str, bundle: McpBundledSpec, step_input: dict) -> dict:
+    container: dict = {"name": svc, "image": _image(bundle)}
+    if step_input:
+        container["env"] = _env_list(step_input)
+    return container
+
+
+# --- workflow（常駐サービス群） -------------------------------------------------
+
+
+def build_compose(manifest: Manifest, workflow: WorkflowSpec) -> dict:
+    """workflow を docker-compose（v2）の dict へ決定的に変換する（常駐 service）。"""
+    bundles = {b.name: b for b in manifest.mcp_bundled}
+    services: dict = {}
+    for svc, step in _named_steps(workflow.steps):
+        service: dict = {"image": _image(bundles[step.mcp_bundled]), "restart": "unless-stopped"}
         if step.input:
             service["environment"] = {k: str(v) for k, v in step.input.items()}
-        labels = {"juice.workflow": workflow.name}
-        if workflow.schedule:
-            labels["juice.schedule"] = workflow.schedule
-        service["labels"] = labels
+        service["labels"] = {"juice.workflow": workflow.name}
         services[svc] = service
     return {"name": workflow.name, "services": services}
 
 
-def _container(step_svc: str, bundle: McpBundledSpec, step_input: dict) -> dict:
-    """k8s container spec（image／env）を組む。image は規約名、env は input を文字列化。"""
-    container: dict = {"name": step_svc, "image": _image(bundle)}
-    if step_input:
-        container["env"] = [{"name": k, "value": str(v)} for k, v in step_input.items()]
-    return container
-
-
 def build_k8s(manifest: Manifest, workflow: WorkflowSpec) -> list[dict]:
-    """workflow を Kubernetes manifest（複数リソース）へ決定的に変換する。
-
-    `schedule` があれば各 step を CronJob、無ければ Deployment（長期常駐 replicas:1）にする。
-    image/env/label は compose と揃える。出力は multi-doc YAML（ArgoCD 向け）。
-    """
+    """workflow を k8s Deployment（複数リソース）へ決定的に変換する（常駐 replicas:1）。"""
     bundles = {b.name: b for b in manifest.mcp_bundled}
     resources: list[dict] = []
-    used: dict[str, int] = {}
-    for step in workflow.steps:
-        bundle = bundles[step.mcp_bundled]  # parse 時に参照検証済み
-        svc = step.mcp_bundled
-        used[svc] = used.get(svc, 0) + 1
-        if used[svc] > 1:
-            svc = f"{svc}-{used[svc]}"
-        name = f"{workflow.name}-{svc}"
+    for svc, step in _named_steps(workflow.steps):
         pod_labels = {"app": svc, "juice.workflow": workflow.name}
-        container = _container(svc, bundle, step.input)
-        meta = {"name": name, "labels": {"juice.workflow": workflow.name}}
-        if workflow.schedule:
-            resources.append(
-                {
-                    "apiVersion": "batch/v1",
-                    "kind": "CronJob",
-                    "metadata": meta,
-                    "spec": {
-                        "schedule": workflow.schedule,
-                        "jobTemplate": {
-                            "spec": {
-                                "template": {
-                                    "metadata": {"labels": pod_labels},
-                                    "spec": {
-                                        "restartPolicy": "OnFailure",
-                                        "containers": [container],
-                                    },
-                                }
-                            }
-                        },
+        container = _container(svc, bundles[step.mcp_bundled], step.input)
+        resources.append(
+            {
+                "apiVersion": "apps/v1",
+                "kind": "Deployment",
+                "metadata": {
+                    "name": f"{workflow.name}-{svc}",
+                    "labels": {"juice.workflow": workflow.name},
+                },
+                "spec": {
+                    "replicas": 1,
+                    "selector": {"matchLabels": {"app": svc}},
+                    "template": {
+                        "metadata": {"labels": pod_labels},
+                        "spec": {"containers": [container]},
                     },
-                }
-            )
-        else:
-            resources.append(
-                {
-                    "apiVersion": "apps/v1",
-                    "kind": "Deployment",
-                    "metadata": meta,
-                    "spec": {
-                        "replicas": 1,
-                        "selector": {"matchLabels": {"app": svc}},
-                        "template": {
-                            "metadata": {"labels": pod_labels},
-                            "spec": {"containers": [container]},
-                        },
-                    },
-                }
-            )
+                },
+            }
+        )
     return resources
+
+
+# --- schedule（定期実行のトリガ） -----------------------------------------------
+
+
+def build_schedule_compose(manifest: Manifest, schedule: ScheduleSpec) -> dict:
+    """schedule を docker-compose へ。cron は無いので自動起動しない one-shot service にする。
+
+    `restart: "no"`＋`profiles: [scheduled]`（`docker compose up` で勝手に起動しない）。
+    cron 値は label に保持し、外部 cron が `docker compose run <svc>` で起動する想定。
+    """
+    bundles = {b.name: b for b in manifest.mcp_bundled}
+    services: dict = {}
+    for svc, step in _named_steps(schedule.steps):
+        service: dict = {"image": _image(bundles[step.mcp_bundled]), "restart": "no"}
+        if step.input:
+            service["environment"] = {k: str(v) for k, v in step.input.items()}
+        service["profiles"] = ["scheduled"]
+        service["labels"] = {"juice.schedule": schedule.schedule, "juice.scheduled": schedule.name}
+        services[svc] = service
+    return {"name": schedule.name, "services": services}
+
+
+def build_schedule_k8s(manifest: Manifest, schedule: ScheduleSpec) -> list[dict]:
+    """schedule を k8s CronJob（複数リソース）へ決定的に変換する。"""
+    bundles = {b.name: b for b in manifest.mcp_bundled}
+    resources: list[dict] = []
+    for svc, step in _named_steps(schedule.steps):
+        pod_labels = {"app": svc, "juice.scheduled": schedule.name}
+        resources.append(
+            {
+                "apiVersion": "batch/v1",
+                "kind": "CronJob",
+                "metadata": {
+                    "name": f"{schedule.name}-{svc}",
+                    "labels": {"juice.scheduled": schedule.name},
+                },
+                "spec": {
+                    "schedule": schedule.schedule,
+                    "jobTemplate": {
+                        "spec": {
+                            "template": {
+                                "metadata": {"labels": pod_labels},
+                                "spec": {
+                                    "restartPolicy": "OnFailure",
+                                    "containers": [
+                                        _container(svc, bundles[step.mcp_bundled], step.input)
+                                    ],
+                                },
+                            }
+                        }
+                    },
+                },
+            }
+        )
+    return resources
+
+
+# --- target ディスパッチ / 書き出し ---------------------------------------------
 
 
 def _dump(data, multi_doc: bool) -> str:
@@ -146,20 +187,42 @@ def _dump(data, multi_doc: bool) -> str:
 
 
 # target 名 -> (builder, 出力ファイル名, multi_doc)。新 target はここに足す。
-_TARGETS: dict[str, tuple] = {
+_WF_TARGETS: dict[str, tuple] = {
     "compose": (build_compose, "docker-compose.yml", False),
     "k8s": (build_k8s, "manifests.yaml", True),
 }
+_SCHED_TARGETS: dict[str, tuple] = {
+    "compose": (build_schedule_compose, "docker-compose.yml", False),
+    "k8s": (build_schedule_k8s, "manifests.yaml", True),
+}
+
+
+def _build(manifest: Manifest, spec, target: str, targets: dict) -> tuple[str, str]:
+    if target not in targets:
+        raise ValueError(f"未対応の target: {target}（対応: {', '.join(targets)}）")
+    builder, filename, multi_doc = targets[target]
+    return filename, _dump(builder(manifest, spec), multi_doc)
 
 
 def build_deployment(
     manifest: Manifest, workflow: WorkflowSpec, target: str = DEFAULT_TARGET
 ) -> tuple[str, str]:
-    """(出力ファイル名, テキスト) を返す。target は pluggable（`compose` / `k8s`）。"""
-    if target not in _TARGETS:
-        raise ValueError(f"未対応の target: {target}（対応: {', '.join(_TARGETS)}）")
-    builder, filename, multi_doc = _TARGETS[target]
-    return filename, _dump(builder(manifest, workflow), multi_doc)
+    """workflow の (出力ファイル名, テキスト) を返す。target は `compose` / `k8s`。"""
+    return _build(manifest, workflow, target, _WF_TARGETS)
+
+
+def build_schedule_deployment(
+    manifest: Manifest, schedule: ScheduleSpec, target: str = DEFAULT_TARGET
+) -> tuple[str, str]:
+    """schedule の (出力ファイル名, テキスト) を返す。target は `compose` / `k8s`。"""
+    return _build(manifest, schedule, target, _SCHED_TARGETS)
+
+
+def _write(out_dir: str, name: str, filename: str, text: str, target: str, count: int) -> dict:
+    dest = Path(out_dir) / name / filename
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(text, encoding="utf-8")
+    return {"out": str(dest), "target": target, "services": count}
 
 
 def write_deployment(
@@ -168,10 +231,19 @@ def write_deployment(
     out_dir: str = DEPLOY_DIR,
     target: str = DEFAULT_TARGET,
 ) -> dict:
-    """workflow のデプロイ成果物を `out_dir/<workflow>/<file>` に書き出す（冪等）。要約を返す。"""
+    """workflow のデプロイ成果物を `out_dir/<name>/<file>` に冪等書き出し。要約を返す。"""
     workflow = find_workflow(manifest, workflow_name)
     filename, text = build_deployment(manifest, workflow, target)
-    dest = Path(out_dir) / workflow.name / filename
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(text, encoding="utf-8")
-    return {"out": str(dest), "target": target, "services": len(workflow.steps)}
+    return _write(out_dir, workflow.name, filename, text, target, len(workflow.steps))
+
+
+def write_schedule_deployment(
+    manifest: Manifest,
+    schedule_name: str,
+    out_dir: str = DEPLOY_DIR,
+    target: str = DEFAULT_TARGET,
+) -> dict:
+    """schedule のデプロイ成果物を `out_dir/<name>/<file>` に冪等書き出し。要約を返す。"""
+    schedule = find_schedule(manifest, schedule_name)
+    filename, text = build_schedule_deployment(manifest, schedule, target)
+    return _write(out_dir, schedule.name, filename, text, target, len(schedule.steps))

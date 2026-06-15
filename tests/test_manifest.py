@@ -336,6 +336,12 @@ mcp_bundled:
       - bind: weather
         from: mcp_server:weather
 workflows:
+  - name: weather-service
+    steps:
+      - mcp_bundled: weather-bot
+        input:
+          city: "Tokyo"
+schedules:
   - name: morning-brief
     schedule: "0 7 * * *"
     steps:
@@ -347,12 +353,39 @@ workflows:
 
 def test_parse_workflow():
     m = parse_manifest(_WORKFLOW)
-    assert m.names("workflows") == ["morning-brief"]
+    assert m.names("workflows") == ["weather-service"]
     wf = m.workflows[0]
-    assert wf.schedule == "0 7 * * *"
+    assert not hasattr(wf, "schedule")  # schedule は workflow の持ち物ではない（別概念へ分離）
     assert len(wf.steps) == 1
     assert wf.steps[0].mcp_bundled == "weather-bot"
     assert wf.steps[0].input == {"city": "Tokyo"}
+
+
+def test_parse_schedule():
+    m = parse_manifest(_WORKFLOW)
+    assert m.names("schedules") == ["morning-brief"]
+    sch = m.schedules[0]
+    assert sch.schedule == "0 7 * * *"
+    assert sch.steps[0].mcp_bundled == "weather-bot"
+    assert sch.steps[0].input == {"city": "Tokyo"}
+
+
+def test_schedule_requires_cron():
+    text = (
+        "apiVersion: juice/v1\nmcp_bundled:\n  - name: weather-bot\n"
+        "schedules:\n  - name: s\n    steps:\n      - mcp_bundled: weather-bot\n"
+    )
+    with pytest.raises(ManifestError, match="schedule（cron 文字列）が必要"):
+        parse_manifest(text)
+
+
+def test_schedule_unknown_bundle_reference():
+    text = (
+        "apiVersion: juice/v1\nschedules:\n  - name: s\n    schedule: '0 7 * * *'\n"
+        "    steps:\n      - mcp_bundled: ghost\n"
+    )
+    with pytest.raises(ManifestError, match="未定義の mcp_bundled"):
+        parse_manifest(text)
 
 
 def test_workflow_step_requires_mcp_bundled():
