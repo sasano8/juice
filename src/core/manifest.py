@@ -1,7 +1,7 @@
 """宣言的ワークスペース manifest（juice.yaml）のパーサ。
 
 `juice.yaml` は「何を・どう結線するか」を 1 ファイルで宣言する唯一の正
-（source of truth）。全レイヤ（mcp_server / subagent / skill / mcp_bundled / instance）を
+（source of truth）。全レイヤ（mcp_server / subagent / skill / mcp_bundled / instance / workflow）を
 名前参照で結線する（設計は docs/workspace.md を参照）。
 
 このモジュールは manifest を **型付きの構造（Manifest）へパースし、構造と相互参照を検証**する
@@ -96,6 +96,24 @@ class InstanceSpec:
 
 
 @dataclass
+class WorkflowStep:
+    """workflow の 1 ステップ。指定 mcp_bundled を input 付きで起動する。"""
+
+    mcp_bundled: str
+    input: dict = field(default_factory=dict)
+
+
+@dataclass
+class WorkflowSpec:
+    """協調層：複数 mcp_bundled（→ instance）の実行手順を宣言する（実行は後続レイヤ）。"""
+
+    name: str
+    steps: list[WorkflowStep] = field(default_factory=list)
+    schedule: str | None = None  # 任意。cron 式（例: "0 7 * * *"）
+    version: str | None = None
+
+
+@dataclass
 class Manifest:
     """juice.yaml 全体。全レイヤを保持する。"""
 
@@ -106,6 +124,7 @@ class Manifest:
     skills: list[SkillSpec] = field(default_factory=list)
     mcp_bundled: list[McpBundledSpec] = field(default_factory=list)
     instances: list[InstanceSpec] = field(default_factory=list)
+    workflows: list[WorkflowSpec] = field(default_factory=list)
 
     def names(self, layer: str) -> list[str]:
         """指定レイヤ（複数形キー）に含まれるリソース名の一覧を返す。"""
@@ -153,6 +172,7 @@ def parse_manifest(text: str) -> Manifest:
         skills=[_parse_skill(it) for it in _items(raw, "skills")],
         mcp_bundled=[_parse_mcp_bundled(it) for it in _items(raw, "mcp_bundled")],
         instances=[_parse_instance(it) for it in _items(raw, "instances")],
+        workflows=[_parse_workflow(it) for it in _items(raw, "workflows")],
     )
     _validate(manifest)
     return manifest
@@ -262,12 +282,40 @@ def _parse_instance(item: dict) -> InstanceSpec:
     )
 
 
+def _parse_workflow(item: dict) -> WorkflowSpec:
+    name = _require_name(item, "workflows")
+    steps = [_parse_workflow_step(s, name) for s in _sub_items(item, "steps", "workflows", name)]
+    return WorkflowSpec(
+        name=name,
+        steps=steps,
+        schedule=_opt_str(item, "schedule", "workflows", name),
+        version=_opt_version(item, "workflows", name),
+    )
+
+
+def _parse_workflow_step(item: dict, owner: str) -> WorkflowStep:
+    where = f"workflow '{owner}' の steps[]"
+    if not isinstance(item, dict):
+        raise ManifestError(f"{where} の各要素はマッピングである必要があります")
+    bundled = item.get("mcp_bundled")
+    if not bundled or not isinstance(bundled, str):
+        raise ManifestError(f"{where} に mcp_bundled（文字列）が必要です")
+    raw_input = item.get("input")
+    if raw_input is None:
+        raw_input = {}
+    elif not isinstance(raw_input, dict):
+        raise ManifestError(
+            f"{where} '{bundled}' の input はマッピングが必要です（got {type(raw_input).__name__}）"
+        )
+    return WorkflowStep(mcp_bundled=bundled, input=raw_input)
+
+
 # --- 相互参照の検証 ------------------------------------------------------------
 
 
 def _validate(m: Manifest) -> None:
     """レイヤ内の名前重複と、レイヤ間の参照解決を検証する。"""
-    for layer in ("mcp_servers", "subagents", "skills", "mcp_bundled", "instances"):
+    for layer in ("mcp_servers", "subagents", "skills", "mcp_bundled", "instances", "workflows"):
         _check_unique(m.names(layer), layer)
 
     servers = set(m.names("mcp_servers"))
@@ -303,6 +351,13 @@ def _validate(m: Manifest) -> None:
             raise ManifestError(
                 f"instance '{inst.name}': 未定義の mcp_bundled を参照: {inst.mcp_bundled}"
             )
+
+    for wf in m.workflows:
+        for step in wf.steps:
+            if step.mcp_bundled not in bundles:
+                raise ManifestError(
+                    f"workflow '{wf.name}': 未定義の mcp_bundled を参照: {step.mcp_bundled}"
+                )
 
 
 def _check_constraint(b: McpBundledSpec, t: ToolBinding, server_version: str | None) -> None:

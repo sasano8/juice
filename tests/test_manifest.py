@@ -317,3 +317,69 @@ def test_load_manifest_from_file(tmp_path):
 def test_load_manifest_missing_file(tmp_path):
     with pytest.raises(ManifestError, match="見つかりません"):
         load_manifest(tmp_path / "nope.yaml")
+
+
+# --- workflow（E001 第一歩） ---------------------------------------------------
+
+_WORKFLOW = """\
+apiVersion: juice/v1
+mcp_servers:
+  - name: weather
+    command: npx -y @example/mcp-weather
+subagents:
+  - name: forecaster
+    allow_tools: [weather]
+mcp_bundled:
+  - name: weather-bot
+    subagent: forecaster
+    tools:
+      - bind: weather
+        from: mcp_server:weather
+workflows:
+  - name: morning-brief
+    schedule: "0 7 * * *"
+    steps:
+      - mcp_bundled: weather-bot
+        input:
+          city: "Tokyo"
+"""
+
+
+def test_parse_workflow():
+    m = parse_manifest(_WORKFLOW)
+    assert m.names("workflows") == ["morning-brief"]
+    wf = m.workflows[0]
+    assert wf.schedule == "0 7 * * *"
+    assert len(wf.steps) == 1
+    assert wf.steps[0].mcp_bundled == "weather-bot"
+    assert wf.steps[0].input == {"city": "Tokyo"}
+
+
+def test_workflow_step_requires_mcp_bundled():
+    text = "apiVersion: juice/v1\nworkflows:\n  - name: w\n    steps:\n      - input: {a: 1}\n"
+    with pytest.raises(ManifestError, match="mcp_bundled（文字列）が必要"):
+        parse_manifest(text)
+
+
+def test_workflow_unknown_bundle_reference():
+    text = "apiVersion: juice/v1\nworkflows:\n  - name: w\n    steps:\n      - mcp_bundled: ghost\n"
+    with pytest.raises(ManifestError, match="未定義の mcp_bundled"):
+        parse_manifest(text)
+
+
+def test_workflow_step_input_must_be_mapping():
+    text = (
+        "apiVersion: juice/v1\nmcp_bundled:\n  - name: weather-bot\n"
+        "workflows:\n  - name: w\n    steps:\n"
+        "      - mcp_bundled: weather-bot\n        input: not-a-map\n"
+    )
+    with pytest.raises(ManifestError, match="input はマッピング"):
+        parse_manifest(text)
+
+
+def test_workflow_duplicate_name_errors():
+    text = (
+        "apiVersion: juice/v1\nworkflows:\n  - name: w\n    steps: []\n  - name: w\n    steps: []\n"
+    )
+    with pytest.raises(ManifestError, match="重複した name"):
+        parse_manifest(text)

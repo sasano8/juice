@@ -10,6 +10,7 @@ mcp_bundled → instance）に下層から registry レイアウトへ materiali
 - skill      → `skills/<name>/SKILL.md`
 - mcp_bundled→ `mcp_bundled/<name>/bundle.yml`
 - instance   → `instances/<name>/index.yml`
+- workflow   → `workflows/<name>/index.md`（frontmatter: kind/name/type/schedule/steps）
 
 `dry_run=True` なら書き込まず、行われる変更（written / pruned）だけを返す。
 
@@ -30,16 +31,19 @@ from .manifest import (
     McpServerSpec,
     SkillSpec,
     SubagentSpec,
+    WorkflowSpec,
 )
 from .registry import RegistryArray
 
 # (manifest 属性, registry レイヤ) を依存順（下層 → 上層）に並べる。
+# workflow は instance/mcp_bundled を協調する最上位なので末尾に置く。
 _LAYER_ORDER: list[tuple[str, str]] = [
     ("mcp_servers", "tool"),
     ("skills", "skill"),
     ("subagents", "subagent"),
     ("mcp_bundled", "mcp_bundled"),
     ("instances", "instance"),
+    ("workflows", "workflow"),
 ]
 
 
@@ -93,6 +97,8 @@ def _materialize(layer: str, item, ns: str) -> str:
         return _bundle(item, ns)
     if layer == "instance":
         return _instance(item)
+    if layer == "workflow":
+        return _workflow(item)
     raise ValueError(f"unknown layer: {layer}")  # 到達しない（_LAYER_ORDER に閉じている）
 
 
@@ -166,6 +172,18 @@ def _instance(i: InstanceSpec) -> str:
     if i.defaults:
         data["defaults"] = dict(i.defaults)
     return yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
+
+
+def _workflow(w: WorkflowSpec) -> str:
+    # workflow は .md concept doc。`type` は OKF 必須、`kind` は juice 分類（metadata.verify_okf）。
+    meta: dict = {"kind": "workflow", "name": w.name, "type": "workflow"}
+    if w.schedule:
+        meta["schedule"] = w.schedule
+    meta["steps"] = [
+        {"mcp_bundled": s.mcp_bundled, **({"input": dict(s.input)} if s.input else {})}
+        for s in w.steps
+    ]
+    return _frontmatter(meta, f"# {w.name}\n")
 
 
 # --- 小さなヘルパ --------------------------------------------------------------

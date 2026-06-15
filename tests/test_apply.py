@@ -148,3 +148,38 @@ def test_materialized_skill_has_okf_type(regs):
     text = regs.read("skill", "report-weather")
     assert "kind: skill" in text
     assert "type: skill" in text  # OKF 必須の concept type
+
+
+# workflow（E001 第一歩）を加えた manifest。base の weather-bot bundle を協調する。
+MANIFEST_WITH_WORKFLOW = (
+    MANIFEST
+    + """
+workflows:
+  - name: morning-brief
+    schedule: "0 7 * * *"
+    steps:
+      - mcp_bundled: weather-bot
+        input:
+          city: "Tokyo"
+"""
+)
+
+
+def test_apply_materializes_workflow(regs):
+    r = apply_manifest(regs, parse_manifest(MANIFEST_WITH_WORKFLOW))
+    assert "workflow/morning-brief" in r["written"]
+    assert regs.exists("workflow", "morning-brief")
+    text = regs.read("workflow", "morning-brief")
+    assert "kind: workflow" in text
+    assert "type: workflow" in text  # OKF 必須の concept type
+    assert "schedule:" in text
+    assert "mcp_bundled: weather-bot" in text
+    assert "city: Tokyo" in text
+
+
+def test_apply_workflow_is_idempotent(regs):
+    m = parse_manifest(MANIFEST_WITH_WORKFLOW)
+    apply_manifest(regs, m)
+    r2 = apply_manifest(regs, m)
+    assert r2["written"] == []
+    assert r2["pruned"] == []
