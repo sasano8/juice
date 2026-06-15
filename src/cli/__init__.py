@@ -14,6 +14,7 @@ import sys
 import yaml
 
 from ..core import LAYERS, Juice, LockError, ManifestError, load_manifest, write_lock
+from ..core.digest import npm_digest
 
 # 宣言ライフサイクル（juice.yaml）の典型フロー。トップレベル -h の epilog に出す。
 _WORKFLOW_EPILOG = """\
@@ -102,6 +103,11 @@ def build_parser() -> argparse.ArgumentParser:
         "-f", "--file", default="juice.yaml", help="manifest のパス（既定: juice.yaml）"
     )
     lp.add_argument("-o", "--out", default="juice.lock", help="出力先（既定: juice.lock）")
+    lp.add_argument(
+        "--resolve-digests",
+        action="store_true",
+        help="外部パッケージ（npm）の digest を取得して lock に記録する（要ネットワーク）",
+    )
 
     for verb, help_text in (
         ("apply", "juice.yaml の desired state を registries へ冪等反映する"),
@@ -301,10 +307,11 @@ def _cmd_manifest_validate(file: str) -> int:
     return 0
 
 
-def _cmd_lock(file: str, out: str) -> int:
+def _cmd_lock(file: str, out: str, resolve_digests: bool = False) -> int:
     """juice.yaml を解決して juice.lock を生成する（不正なら 1）。"""
+    resolver = npm_digest if resolve_digests else None
     try:
-        result = write_lock(file, out)
+        result = write_lock(file, out, digest_resolver=resolver)
     except ManifestError as e:
         return _fail_manifest(file, e)
     print(f"locked: {out} ({result['manifestDigest']})")
@@ -348,7 +355,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     if args.layer == "lock":
-        return _cmd_lock(args.file, args.out)
+        return _cmd_lock(args.file, args.out, args.resolve_digests)
 
     if args.layer in ("apply", "plan"):
         return _cmd_apply(args)

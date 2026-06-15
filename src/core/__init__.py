@@ -10,6 +10,7 @@ from __future__ import annotations
 from . import bundle as _bundle
 from .apply import apply_manifest
 from .config import ALL_ORDER, LAYERS, Config
+from .digest import DigestResolver, npm_digest, null_resolver
 from .factory import create_registries, create_registry, create_storage
 from .lock import (
     Lock,
@@ -48,6 +49,9 @@ __all__ = [
     "dump_lock",
     "write_lock",
     "lock_status",
+    "DigestResolver",
+    "npm_digest",
+    "null_resolver",
     "apply_manifest",
     "Version",
     "SemverError",

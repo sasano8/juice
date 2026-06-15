@@ -4,15 +4,16 @@
 再現性は「committed な spec（juice.yaml）＋ lock」で担保する（docs/workspace.md 参照）。
 
 現状の lock が固定するもの:
-- **manifestDigest** … manifest の宣言内容のハッシュ。spec と lock の不整合（drift）検出に使う。
-- **mcp_servers** … 各 server の `package` / `command` を pin。外部パッケージの `digest`（npm / OCI
-  等）の取得元は未決の論点のため、欄は用意して値は `None`（TODO）にしておく。
+- **manifestDigest** … manifest の宣言内容（spec）のハッシュ。spec/lock の drift 検出に使う。
+  解決された `digest` は spec ではないので **manifestDigest には含めない**（spec 単独で決定的）。
+- **mcp_servers** … 各 server の `package` / `command` / `version` を pin。外部パッケージの内容
+  同一性は `digest` 欄に記録（digest.py の resolver が npm SRI を解決。既定は未解決＝`None`）。
 - **instances** … instance ごとの deployable な依存閉包（mcp_bundled → subagent / skills /
   結線された mcp_server）を解決して固定する。
 
-`build_lock` は純関数で、同じ Manifest からは常に同じ Lock を返す。`dump_lock` も決定的に直列化する
-ため、同じ juice.yaml からは**バイト単位で同一の juice.lock** が得られる（冪等）。
-digest の取得などの副作用は持たない。
+`build_lock` は **resolver を固定すれば**同じ Manifest から常に同じ Lock を返す。`dump_lock` も
+決定的に直列化するため、同じ juice.yaml からは**バイト単位で同一の juice.lock** が得られる（冪等）。
+ネットワーク I/O などの副作用は resolver（[digest.py](digest.py)）に隔離し、本モジュールは持たない。
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from pathlib import Path
 
 import yaml
 
+from .digest import DigestResolver
 from .manifest import Manifest, load_manifest
 
 # juice.lock のフォーマット版。スキーマを変えたら上げる。
@@ -41,13 +43,13 @@ _LOCK_HEADER = "# juice.lock — 生成物。手で編集しない（`juice lock
 
 @dataclass
 class LockedServer:
-    """pin された mcp_server。digest は外部取得が未実装のため当面 None。"""
+    """pin された mcp_server。digest は resolver 注入時のみ埋まる（既定は None）。"""
 
     name: str
     package: str | None
     command: str | None
     version: str | None = None  # 宣言された SemVer（C004）。未指定なら None
-    digest: str | None = None  # TODO: npm / OCI 等から取得して pin する
+    digest: str | None = None  # npm の SRI 等（digest.py の resolver。未解決なら None）
 
 
 @dataclass
@@ -87,10 +89,21 @@ def manifest_digest(manifest: Manifest) -> str:
     return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def build_lock(manifest: Manifest) -> Lock:
-    """Manifest を解決して Lock を構築する（純関数・冪等）。"""
+def build_lock(manifest: Manifest, *, digest_resolver: DigestResolver | None = None) -> Lock:
+    """Manifest を解決して Lock を構築する。
+
+    `digest_resolver` を注入すると各 mcp_server の `digest` 欄を埋める
+    （`(package, version) -> str | None`。副作用は resolver 側に隔離する＝[digest.py](digest.py)）。
+    未指定なら従来どおり `digest` は None（純関数・冪等）。resolver を固定すれば結果も決定的。
+    """
     servers = [
-        LockedServer(name=s.name, package=s.package, command=s.command, version=s.version)
+        LockedServer(
+            name=s.name,
+            package=s.package,
+            command=s.command,
+            version=s.version,
+            digest=(digest_resolver(s.package, s.version) if digest_resolver else None),
+        )
         for s in manifest.mcp_servers
     ]
 
@@ -170,13 +183,16 @@ def lock_manifest_text(text: str) -> Lock:
     return build_lock(parse_manifest(text))
 
 
-def write_lock(manifest_path: str, out_path: str) -> dict:
+def write_lock(
+    manifest_path: str, out_path: str, *, digest_resolver: DigestResolver | None = None
+) -> dict:
     """manifest を読み、Lock を生成して out_path に書き出す。要約 dict を返す。
 
-    冪等: 同じ manifest からは毎回同一バイトの juice.lock を書く。
+    冪等: 同じ manifest からは毎回同一バイトの juice.lock（resolver も固定なら digest 込みで冪等）。
+    `digest_resolver` を渡すと外部パッケージの digest を解決して記録する（既定は解決しない）。
     """
     manifest = load_manifest(manifest_path)
-    lock = build_lock(manifest)
+    lock = build_lock(manifest, digest_resolver=digest_resolver)
     text = dump_lock(lock)
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(text)

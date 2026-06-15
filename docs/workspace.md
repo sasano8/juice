@@ -152,8 +152,12 @@ juice instance verify tokyo-weather-bot
 
 > **実装メモ（C002）:** `juice lock`（`src/core/lock.py` / CLI `juice lock [-f juice.yaml] [-o juice.lock]`）は
 > 実装済み。現状の `juice.lock` は manifest の解決結果（mcp_server の `package`/`command`、instance の
-> 依存閉包）＋ `manifestDigest`（spec との drift 検出用）を**冪等に** pin する。外部パッケージの
-> `digest`（npm / OCI 等）取得は未決の論点のため欄のみ用意（値は `null`、TODO）。
+> 依存閉包）＋ `manifestDigest`（spec との drift 検出用）を**冪等に** pin する。
+> 外部パッケージの `digest` は `--resolve-digests` で npm registry から **SRI integrity**（`sha512-...`）を
+> 取得して記録する（`src/core/digest.py` の resolver を `build_lock` に注入。ネットワーク I/O はそこに隔離し、
+> lock 生成は純粋に保つ）。既定（フラグ無し）や取得失敗・オフライン時は `null` フォールバック（後方互換）。
+> `digest` は解決値であって spec ではないため **`manifestDigest` には含めない**（drift 検出は spec 単独で決定的）。
+> OCI digest は必要になってから（YAGNI）。
 >
 > **実装メモ（C003）:** `juice apply`（`src/core/apply.py` / CLI `juice apply [-f juice.yaml] [--dry-run]
 > [--no-prune]`）も実装済み。manifest の各レイヤを依存順（mcp_server → skill / subagent → mcp_bundled →
