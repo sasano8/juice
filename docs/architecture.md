@@ -166,8 +166,13 @@ flowchart TB
 > **実行モデル（E001 第二歩）:** juice は workflow を **実行しない**。workflow 宣言から、実行基盤が食える
 > **デプロイ成果物を生成**する（`src/core/deploy.py` / CLI `juice workflow build <name>`）。
 > 「juice = 宣言から生成、常駐・協調・監視は外部基盤に委譲」がコア（`apply` が registries を、`build` が
-> image を生成するのと同型）。**target は pluggable で最初の実装は docker-compose**：
-> `deploy/<name>/docker-compose.yml` を生成し、各 step の mcp_bundled image（規約 `juice/<name>[:version]`）を
-> 長期常駐 service（`restart: unless-stopped`）にする。`input` は環境変数、`schedule` は label（compose に
-> cron は無く、外部スケジューラ/k8s CronJob 用のメタ）。`docker compose up` や k8s manifest 化＋ArgoCD 連携、
-> 実起動・スケジューラ・並行制御は次段階（YAGNI。現状は **生成のみ**）。
+> image を生成するのと同型）。**target は pluggable**（`deploy.py` の `_TARGETS`）：
+> - **compose**（`--target compose`、既定）… `deploy/<name>/docker-compose.yml`。各 step の mcp_bundled image
+>   （規約 `juice/<name>[:version]`）を長期常駐 service（`restart: unless-stopped`）に。`input`→環境変数、
+>   `schedule`→label（compose に cron は無く外部スケジューラ用のメタ）。
+> - **k8s**（`--target k8s`）… `deploy/<name>/manifests.yaml`（multi-doc）。`schedule` 有なら各 step を **CronJob**、
+>   無なら **Deployment**（replicas:1 の長期常駐）に。`input`→env、image/label は compose と揃える。ArgoCD が
+>   dir 単位で適用できる形（`kubectl apply` / GitOps へ委譲）。
+>
+> いずれも **生成のみ**。`docker compose up` / `kubectl apply` の実起動・スケジューラ稼働・step 協調（順序・
+> データ受け渡し）は次段階（YAGNI）。現状 step は独立 service / Deployment のまま。

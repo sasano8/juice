@@ -10,6 +10,7 @@ import yaml
 from src.core.deploy import (
     build_compose,
     build_deployment,
+    build_k8s,
     find_workflow,
     write_deployment,
 )
@@ -103,3 +104,70 @@ def test_duplicate_bundle_steps_get_unique_service_names():
     )
     compose = build_compose(m, find_workflow(m, "w"))
     assert set(compose["services"]) == {"bot", "bot-2"}
+
+
+# --- k8s target（E001 第三歩） -------------------------------------------------
+
+MANIFEST_NO_SCHEDULE = """\
+apiVersion: juice/v1
+mcp_bundled:
+  - name: weather-bot
+    version: 0.0.1
+workflows:
+  - name: daemon-brief
+    steps:
+      - mcp_bundled: weather-bot
+        input:
+          city: "Tokyo"
+"""
+
+
+def test_k8s_cronjob_when_scheduled():
+    m = _manifest()  # morning-brief は schedule あり
+    docs = build_k8s(m, find_workflow(m, "morning-brief"))
+    kinds = {d["kind"] for d in docs}
+    assert kinds == {"CronJob"}
+    cj = docs[0]
+    assert cj["apiVersion"] == "batch/v1"
+    assert cj["metadata"]["name"] == "morning-brief-weather-bot"
+    assert cj["spec"]["schedule"] == "0 7 * * *"
+    container = cj["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]
+    assert container["image"] == "juice/weather-bot:0.0.1"
+    assert container["env"] == [{"name": "city", "value": "Tokyo"}]
+
+
+def test_k8s_deployment_when_no_schedule():
+    m = parse_manifest(MANIFEST_NO_SCHEDULE)
+    docs = build_k8s(m, find_workflow(m, "daemon-brief"))
+    assert len(docs) == 1
+    dep = docs[0]
+    assert dep["kind"] == "Deployment"
+    assert dep["apiVersion"] == "apps/v1"
+    assert dep["spec"]["replicas"] == 1
+    assert dep["spec"]["selector"]["matchLabels"] == {"app": "weather-bot"}
+    container = dep["spec"]["template"]["spec"]["containers"][0]
+    assert container["image"] == "juice/weather-bot:0.0.1"
+
+
+def test_build_deployment_k8s_filename_and_multidoc():
+    m = parse_manifest(MANIFEST_NO_SCHEDULE)
+    filename, text = build_deployment(m, find_workflow(m, "daemon-brief"), target="k8s")
+    assert filename == "manifests.yaml"
+    assert text.startswith("# 生成物")
+    docs = list(yaml.safe_load_all(text))
+    assert [d["kind"] for d in docs] == ["Deployment"]
+
+
+def test_k8s_is_deterministic():
+    m = _manifest()
+    a = build_deployment(m, find_workflow(m, "morning-brief"), target="k8s")
+    b = build_deployment(m, find_workflow(m, "morning-brief"), target="k8s")
+    assert a == b
+
+
+def test_write_deployment_k8s_target(tmp_path: Path):
+    m = parse_manifest(MANIFEST_NO_SCHEDULE)
+    out = str(tmp_path / "deploy")
+    r = write_deployment(m, "daemon-brief", out_dir=out, target="k8s")
+    assert r["out"].endswith("deploy/daemon-brief/manifests.yaml")
+    assert r["target"] == "k8s"
