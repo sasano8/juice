@@ -1,8 +1,14 @@
 # アーキテクチャ（レイヤ関係）
 
-> juice の概念モデル（mcp_server / mcp_bundled / subagent / skill / tool の関係）。
-> 実装の使い方は [README](../README.md)、ビルド/ワークスペースは
-> [build.md](build.md) / [workspace.md](workspace.md) を参照。
+> juice の全体像を **2 軸** で捉える。
+> 1. **概念モデル** … mcp_server / mcp_bundled / subagent / skill / tool の関係（本書前半）。
+> 2. **宣言的ワークスペース** … その概念モデルを `juice.yaml` 1 ファイルで宣言し、
+>    `lock → plan → apply` で registries へ具現化するライフサイクル（本書「[宣言的ワークスペース](#宣言的ワークスペースjuiceyaml)」節）。
+>
+> 同じレイヤ群を「関係（概念）」と「宣言（運用）」の別表現で見ているだけで、両者は対応する。
+> 実装の使い方は [README](../README.md)、ビルド手順は [build.md](build.md) を参照。
+> 旧設計の宣言案 [workspace.md](workspace.md)（SUPERSEDED）が `juice.yaml` 系の出発点で、
+> 現行で実装された範囲を本書「宣言的ワークスペース」節に反映する。
 
 `mcp_bundled (deployable) = mcp_server`。`mcp_server`（公開インターフェース）には
 **remote**（外部参照）と **bundled**（自作＝同梱）の 2 実現がある。`mcp_bundled` は依存一式を
@@ -63,6 +69,55 @@ mcp_bundled を自己完結＝ deployable な mcp_server にする。
 現在の実装では、宣言（`bundle.yml`）→ `bundle`（vendoring ＋ LangGraph 一式生成）→ `build`
 （docker イメージ）→ `run`（api / ui / mcp_server）という流れ。`run` は LangGraph で LLM と
 MCP server を連携した会話エージェントを起動する。詳細は [build.md](build.md)。
+
+## 宣言的ワークスペース（juice.yaml）
+
+上の概念モデル（mcp_server / subagent / skill / tool / mcp_bundled）を、`bundle.yml` のように
+1 つの mcp_bundled 単位ではなく、**全レイヤを 1 ファイル `juice.yaml` で宣言**する軸。Kubernetes と
+同じく **desired state を宣言 → `apply` で reconcile** する考え方で、`juice.yaml` が唯一の正
+（source of truth）。`registries/` は手で書く一次情報ではなく、apply の**出力先**（生成物）。
+
+```
+juice.yaml ──lock──▶ juice.lock（解決＋digest）──plan──▶ 差分 ──apply──▶ registries/（冪等 reconcile＋prune）
+```
+
+| 段階 | コマンド | 何をする | 実装 |
+|------|----------|----------|------|
+| 解決 | `juice lock`     | manifest を解決し版/digest と `manifestDigest` を冪等に pin | `src/core/lock.py`（C002） |
+| 差分 | `juice plan`     | apply の dry-run。registries に与える変更だけ表示          | apply の dry-run 昇格（C005） |
+| 反映 | `juice apply`    | 依存順に registries へ materialize、宣言外は prune（冪等）  | `src/core/apply.py`（C003） |
+| 検証 | `juice manifest validate` | 構造・相互参照・version 制約を検証                 | `src/core/manifest.py`（C001/C006） |
+
+`apply` は **依存順（mcp_server → skill / subagent → mcp_bundled → instance）** に下層から
+reconcile する（概念モデルの「下位層に依存」と同じ向き）。manifest パーサ（manifest.py）は
+registry / storage に依存しない独立モジュールで、層の分離を保つ。
+
+### 概念モデルと宣言の対応
+
+`juice.yaml` の各キーは、前半の概念モデルのレイヤに 1:1 で対応する（**同じレイヤの別表現**）。
+
+| 概念モデル | juice.yaml のキー | 補足 |
+|------------|-------------------|------|
+| mcp_server（公開インターフェース） | `mcp_servers:` | tool の提供元。remote / bundled の両実現 |
+| subagent | `subagents:` | 脳（1 mcp_bundled に 1 つ） |
+| skill    | `skills:`    | 手順 |
+| tool     | mcp_server の `tools:` ＋ mcp_bundled の `tools[].from` | 公開は mcp_server、結線は from |
+| mcp_bundled（deployable） | `mcp_bundled:` | subagent + skill + tool を結線 |
+| instance（実体化） | `instances:` | 変数既定値・secret 参照を与えた具象（workflow 協調の単位） |
+
+### version / 制約 / drift（再現性の補助線）
+
+- **version（C004）** … 各パッケージ Spec に任意の SemVer を付与（`src/core/semver.py`、外部依存なし）。
+  lock は mcp_server の `version` を記録し `manifestDigest` に反映する。
+- **制約参照（C006）** … tool 束縛の `from: mcp_server:weather@>=1.0.0` を validate で充足チェック
+  （`satisfies`）。`@` 無しは従来どおり（後方互換）。範囲マッチ・複数版共存の依存解決はまだ持たない。
+- **lock drift（C005）** … apply は `juice.lock` の `manifestDigest` と spec を照合し drift を検出
+  （既定は警告、`--frozen` でエラー、`--require-lock` で lock 不在をエラー）。
+  これは「生成物を焼かず spec から再生成し、整合性は digest で担保する」設計原則の実装。
+
+> bundle.yml ベースの現行パイプライン（[build.md](build.md)）と juice.yaml ベースの宣言系は
+> **別系統**。前者は 1 mcp_bundled を deployable にする手順、後者はワークスペース全体の desired state を
+> 宣言・収束させる軸。詳細・未決の論点は [workspace.md](workspace.md)（SUPERSEDED だが宣言設計の出発点）。
 
 ## workflow（実行・協調レイヤ：別軸）
 
