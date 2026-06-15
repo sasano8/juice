@@ -1,6 +1,7 @@
 ---
 kind: subagent
 name: forecaster
+type: subagent
 description: 天気予報を分かりやすく伝えるアシスタント
 model: claude-opus-4-8
 tools: [weather]

@@ -39,7 +39,9 @@ _EXAMPLES: dict[str, str] = {
         "  juice apply -f juice.yaml --dry-run       # 変更予定だけ表示\n"
         "  juice apply -f juice.yaml --frozen        # lock と drift していたらエラー"
     ),
-    "registry-verify": "例:\n  juice registry verify    # name=dir 一致＋インデックス drift を検査",
+    "registry-verify": (
+        "例:\n  juice registry verify    # name=dir 一致＋OKF 適合＋索引 drift を検査"
+    ),
     "registry-index": "例:\n  juice registry index -o juice.index.yml   # メタデータ索引を生成",
 }
 
@@ -72,12 +74,18 @@ def _cmd_all(juice: Juice) -> int:
 
 
 def _cmd_registry_verify(juice: Juice, index_path: str) -> int:
-    """name=ディレクトリ名の一致と、インデックスの drift を検証する（問題があれば 1）。"""
-    issues = juice.verify_names()
+    """name=dir 一致・OKF 適合（type）・インデックス drift を検証する（問題があれば 1）。"""
     rc = 0
+    issues = juice.verify_names()
     if issues:
         print(f"{len(issues)} 件の name 不一致が見つかりました:", file=sys.stderr)
         for issue in issues:
+            print(f"  - {issue.message()}", file=sys.stderr)
+        rc = 1
+    okf_issues = juice.verify_okf()
+    if okf_issues:
+        print(f"{len(okf_issues)} 件の OKF 非準拠（type 欠落）が見つかりました:", file=sys.stderr)
+        for issue in okf_issues:
             print(f"  - {issue.message()}", file=sys.stderr)
         rc = 1
     status = juice.index_status(index_path)
@@ -89,7 +97,7 @@ def _cmd_registry_verify(juice: Juice, index_path: str) -> int:
         )
         rc = 1
     if rc == 0:
-        msg = "name=dir 一致" + ("／インデックスも最新" if status["present"] else "")
+        msg = "name=dir 一致／OKF 適合" + ("／インデックスも最新" if status["present"] else "")
         print(f"ok: registry は健全です（{msg}）")
     return rc
 
@@ -139,7 +147,7 @@ def build_parser() -> argparse.ArgumentParser:
     rgp_subs = rgp.add_subparsers(dest="action", required=True, metavar="ACTION")
     rvp = rgp_subs.add_parser(
         "verify",
-        help="name とディレクトリ名の一致＋インデックスの drift を検証する",
+        help="name=dir 一致＋OKF 適合（type）＋インデックスの drift を検証する",
         **_raw(epilog=_EXAMPLES["registry-verify"]),
     )
     rvp.add_argument(

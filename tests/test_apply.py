@@ -129,6 +129,7 @@ def test_materialized_tool_content(regs):
     apply_manifest(regs, parse_manifest(MANIFEST))
     text = regs.read("tool", "weather")
     assert "kind: tool" in text
+    assert "type: mcp-server" in text  # OKF 必須の concept type（tool は mcp-server）
     assert "command: npx" in text  # command 文字列の先頭がコマンド
     assert "@example/mcp-weather" in text  # 残りは args
     assert "WEATHER_API_KEY" in text
@@ -138,4 +139,12 @@ def test_materialized_subagent_keeps_prompt(regs):
     apply_manifest(regs, parse_manifest(MANIFEST))
     text = regs.read("subagent", "forecaster")
     assert "kind: subagent" in text
+    assert "type: subagent" in text  # OKF 必須の concept type
     assert "あなたは天気予報アシスタントです。" in text
+
+
+def test_materialized_skill_has_okf_type(regs):
+    apply_manifest(regs, parse_manifest(MANIFEST))
+    text = regs.read("skill", "report-weather")
+    assert "kind: skill" in text
+    assert "type: skill" in text  # OKF 必須の concept type

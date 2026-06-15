@@ -1,6 +1,7 @@
 ---
 kind: workflow
 name: morning-brief
+type: workflow
 schedule: "0 7 * * *"
 steps:
   - mcp_bundled: weather-bot

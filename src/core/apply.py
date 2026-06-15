@@ -115,7 +115,8 @@ def _tool(s: McpServerSpec) -> str:
 
 
 def _subagent(s: SubagentSpec) -> str:
-    meta: dict = {"kind": "subagent", "name": s.name}
+    # `type` は OKF 必須の concept type、`kind` は juice のレイヤ分類（metadata.verify_okf）。
+    meta: dict = {"kind": "subagent", "name": s.name, "type": "subagent"}
     if s.model:
         meta["model"] = s.model
     meta["tools"] = list(s.allow_tools)  # registry の subagent は許可 tool を `tools:` で持つ
@@ -124,7 +125,8 @@ def _subagent(s: SubagentSpec) -> str:
 
 
 def _skill(s: SkillSpec) -> str:
-    meta: dict = {"kind": "skill", "name": s.name}
+    # `type` は OKF 必須の concept type、`kind` は juice のレイヤ分類（metadata.verify_okf）。
+    meta: dict = {"kind": "skill", "name": s.name, "type": "skill"}
     if s.description:
         meta["description"] = s.description
     return _frontmatter(meta, f"# {s.name}\n")

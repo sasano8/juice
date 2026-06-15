@@ -26,7 +26,14 @@ from .manifest import (
     load_manifest,
     parse_manifest,
 )
-from .metadata import NameIssue, extract_name, parse_metadata, verify_names
+from .metadata import (
+    NameIssue,
+    OkfIssue,
+    extract_name,
+    parse_metadata,
+    verify_names,
+    verify_okf,
+)
 from .registry import Registry, RegistryArray
 from .semver import SemverError, Version, is_valid, parse_version, satisfies
 from .storage import LocalStorage, Storage
@@ -51,9 +58,11 @@ __all__ = [
     "write_lock",
     "lock_status",
     "NameIssue",
+    "OkfIssue",
     "parse_metadata",
     "extract_name",
     "verify_names",
+    "verify_okf",
     "build_index",
     "write_index",
     "index_status",
@@ -94,6 +103,13 @@ class Juice:
         不一致（name 欠落 / dir と不一致）を列挙して返す。自動修正はしない。
         """
         return verify_names(self.registries)
+
+    def verify_okf(self) -> list[OkfIssue]:
+        """.md concept document が OKF 必須の `type` を持つか検証する（E004 要件 1）。
+
+        欠落を列挙して返す。自動修正はしない。純 YAML マニフェストは OKF 対象外。
+        """
+        return verify_okf(self.registries)
 
     def index(self, out_path: str = "juice.index.yml") -> dict:
         """registry のメタデータインデックスを生成して書き出す（E004 要件 4）。"""

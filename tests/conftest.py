@@ -33,6 +33,7 @@ _SUBAGENT_INDEX = """\
 ---
 kind: subagent
 name: forecaster
+type: subagent
 description: 天気予報アシスタント
 model: claude-sonnet-4-6
 tools: [weather]
@@ -45,6 +46,7 @@ _SKILL = """\
 ---
 kind: skill
 name: report-weather
+type: skill
 description: 天気を要約して伝える
 ---
 

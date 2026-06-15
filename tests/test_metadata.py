@@ -5,7 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from src.core import create_registries
-from src.core.metadata import extract_name, parse_metadata, verify_names
+from src.core.metadata import (
+    OKF_MD_LAYERS,
+    extract_name,
+    parse_metadata,
+    verify_names,
+    verify_okf,
+)
 
 _FRONTMATTER = """\
 ---
@@ -81,3 +87,40 @@ def test_verify_names_detects_missing(bucket: str) -> None:
     assert missing[0].reason == "missing"
     assert missing[0].declared is None
     assert "name がありません" in missing[0].message()
+
+
+def test_okf_md_layers_are_md_backed() -> None:
+    # OKF 対象は .md concept document のレイヤのみ（純 YAML マニフェストは対象外）。
+    assert set(OKF_MD_LAYERS) == {"tool", "skill", "subagent", "workflow"}
+    assert "mcp_bundled" not in OKF_MD_LAYERS
+    assert "instance" not in OKF_MD_LAYERS
+
+
+def test_verify_okf_clean_registry_has_no_issues(bucket: str) -> None:
+    # 最小レジストリの .md は全て type を持つ（conftest フィクスチャ）。
+    registries = create_registries(bucket=bucket, namespace="default")
+    assert verify_okf(registries) == []
+
+
+def test_verify_okf_detects_missing_type(bucket: str) -> None:
+    # type 欠落の skill を注入すると OKF 非準拠として報告される。
+    _write(bucket, "skills/typeless/SKILL.md", "---\nkind: skill\nname: typeless\n---\n")
+    issues = verify_okf(create_registries(bucket=bucket, namespace="default"))
+    bad = [i for i in issues if i.dir_name == "typeless"]
+    assert len(bad) == 1
+    assert bad[0].layer == "skill"
+    assert bad[0].declared_type is None
+    assert "OKF" in bad[0].message()
+
+
+def test_verify_okf_empty_type_is_non_conformant(bucket: str) -> None:
+    # 空文字の type は非空要件を満たさない＝報告対象。
+    _write(bucket, "tools/blank/index.md", "---\nname: blank\ntype: '   '\n---\n")
+    issues = verify_okf(create_registries(bucket=bucket, namespace="default"))
+    assert any(i.dir_name == "blank" for i in issues)
+
+
+def test_verify_okf_ignores_yaml_manifests(bucket: str) -> None:
+    # mcp_bundled の bundle.yml は type を持たないが OKF 対象外なので報告されない。
+    issues = verify_okf(create_registries(bucket=bucket, namespace="default"))
+    assert all(i.layer != "mcp_bundled" for i in issues)

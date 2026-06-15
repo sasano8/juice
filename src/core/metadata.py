@@ -5,9 +5,11 @@
 - **md frontmatter**（tool / subagent / skill / workflow）… 先頭 `---` で囲んだ YAML ブロック。
 - **純 YAML**（mcp_bundled の bundle.yml / instance の index.yml）… ファイル全体が YAML。
 
-E004 の核となる検証「メタデータの `name` がディレクトリ名に一致するか」をここで提供する。
-不一致は **検出して報告するだけ**で、自動修正はしない（コピー流用か移動かを機械判断できないため、
-人間に修正を委ねる）。OKF 準拠の frontmatter スキーマやメタデータインデックス（高速化）は次段階。
+E004 の核となる検証を 2 つ提供する:
+- **name 検証**（`verify_names`）… メタデータの `name` がディレクトリ名に一致するか。
+- **OKF 適合検証**（`verify_okf`）… .md concept document が OKF 必須の `type` を持つか。
+いずれも **検出して報告するだけ**で自動修正はしない（コピー流用か移動かを機械判断できないため、
+人間に修正を委ねる）。メタデータインデックス（高速化）は [index.py](index.py) を参照。
 """
 
 from __future__ import annotations
@@ -16,8 +18,15 @@ from dataclasses import dataclass
 
 import yaml
 
-from .config import LAYERS
+from .config import ENTRY_FILES, LAYERS
 from .registry import RegistryArray
+
+# OKF（Open Knowledge Format, Google Cloud v0.1）は **.md の concept document** に非空の
+# `type` フィールドを必須とする（推奨フィールド title/description/resource/tags/timestamp は任意）。
+# juice では .md をエントリにするレイヤ（tool / skill / subagent / workflow）が OKF の対象。
+# mcp_bundled / instance は純 YAML の juice マニフェスト（apiVersion/kind ＝ k8s 流儀）で、
+# OKF の .md concept document ではないため対象外。
+OKF_MD_LAYERS: list[str] = [layer for layer, f in ENTRY_FILES.items() if f.endswith(".md")]
 
 
 def parse_metadata(text: str) -> dict:
@@ -82,4 +91,37 @@ def verify_names(registries: RegistryArray) -> list[NameIssue]:
                 issues.append(NameIssue(layer, dir_name, None, "missing"))
             elif declared != dir_name:
                 issues.append(NameIssue(layer, dir_name, declared, "mismatch"))
+    return issues
+
+
+@dataclass
+class OkfIssue:
+    """OKF 適合検証で見つかった不備（concept type の欠落）。"""
+
+    layer: str  # 単数形レイヤ名（tool / subagent / ...）
+    dir_name: str  # registry 上のディレクトリ名
+    declared_type: str | None  # 宣言された type（欠落・非文字列・空なら None）
+
+    def message(self) -> str:
+        loc = f"{LAYERS[self.layer]}/{self.dir_name}"
+        return (
+            f"{loc}: OKF 必須の `type`（concept type）がありません"
+            f"（例: '{self.layer}' を frontmatter に指定してください）"
+        )
+
+
+def verify_okf(registries: RegistryArray) -> list[OkfIssue]:
+    """.md concept document（OKF 対象レイヤ）が非空の `type` を持つか検証する。
+
+    OKF v0.1 の適合規則「非予約 .md は非空の `type` を持つ」を確認する。欠落を列挙して返す。
+    自動修正はしない（[verify_names] と同方針＝人間に委ねる）。純 YAML マニフェスト
+    （mcp_bundled / instance）は OKF の .md concept document ではないため検査対象外。
+    """
+    issues: list[OkfIssue] = []
+    for layer in OKF_MD_LAYERS:
+        for dir_name in registries.list(layer):
+            declared = parse_metadata(registries.read(layer, dir_name)).get("type")
+            if not isinstance(declared, str) or not declared.strip():
+                kept = declared if isinstance(declared, str) else None
+                issues.append(OkfIssue(layer, dir_name, kept))
     return issues
