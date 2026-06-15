@@ -30,7 +30,7 @@ reconcile** する。`juice.yaml` が唯一の正（source of truth）。
 ```
 my-agent/
   juice.yaml     # desired state（宣言）= 唯一の正
-  juice.lock     # 解決済みバージョン/digest（再現性の本体）
+  juice.lock     # 解決済みバージョン（再現性の本体）
   registries/    # apply の出力（reconcile 結果）。生成物なので手編集しない
 ```
 
@@ -53,7 +53,7 @@ namespace: default
 # 最下層：能力の提供元。command/env を宣言するだけ（命令的ビルドはしない）。
 mcp_servers:
   - name: weather
-    package: "@example/mcp-weather"   # lock がバージョン/digest を pin
+    package: "@example/mcp-weather"   # lock がバージョンを pin
     command: npx -y @example/mcp-weather
     env: [WEATHER_API_KEY]
     tools: [get_forecast]             # 1 server が公開する tool（将来複数可）
@@ -104,7 +104,7 @@ instances:
 次の 2 つが揃った状態:
 
 1. **バンドル・ビルド済み** … instance が要する依存一式（mcp_bundled → subagent / skill /
-   mcp_server=tool）が解決・集約・ビルドされ、`juice.lock` で digest が pin されている。
+   mcp_server=tool）が解決・集約・ビルドされ、`juice.lock` でバージョンが pin されている。
 2. **変数の既定値が定義済み** … 非 secret 変数は `defaults` に既定値があり、secret は
    `env:NAME` 参照が揃っている。→ 追加入力なしで起動できる。
 
@@ -116,7 +116,7 @@ instances:
 ## ライフサイクル（コマンド）
 
 ```bash
-# 1) 解決：参照パッケージ/registry のバージョン・digest を確定して lock を更新
+# 1) 解決：参照パッケージ/registry のバージョンを確定して lock を更新
 juice lock
 
 # 2) 差分確認：apply が registry に与える変更を表示（dry-run）
@@ -144,20 +144,19 @@ juice instance verify tokyo-weather-bot
 | 担保するもの | 方法 |
 |--------------|------|
 | 構成（何を・どう結線） | `juice.yaml` を commit |
-| 依存の同一性 | `juice.lock`（mcp_server の package 版/digest、registry 解決を pin） |
+| 依存の同一性 | `juice.lock`（mcp_server の package 版、registry 解決を pin） |
 | 反映の冪等性 | `juice apply`（desired state へ収束、差分のみ適用、不要分は prune） |
 
 **コマンド列の再実行に依存しない。** `juice.yaml` と `juice.lock` を持っていけば、どの環境でも
 `juice apply` で同じ構成が再現される。
 
 > **実装メモ（C002）:** `juice lock`（`src/core/lock.py` / CLI `juice lock [-f juice.yaml] [-o juice.lock]`）は
-> 実装済み。現状の `juice.lock` は manifest の解決結果（mcp_server の `package`/`command`、instance の
-> 依存閉包）＋ `manifestDigest`（spec との drift 検出用）を**冪等に** pin する。
-> 外部パッケージの `digest` は `--resolve-digests` で npm registry から **SRI integrity**（`sha512-...`）を
-> 取得して記録する（`src/core/digest.py` の resolver を `build_lock` に注入。ネットワーク I/O はそこに隔離し、
-> lock 生成は純粋に保つ）。既定（フラグ無し）や取得失敗・オフライン時は `null` フォールバック（後方互換）。
-> `digest` は解決値であって spec ではないため **`manifestDigest` には含めない**（drift 検出は spec 単独で決定的）。
-> OCI digest は必要になってから（YAGNI）。
+> 実装済み。現状の `juice.lock` は manifest の解決結果（mcp_server の `package`/`command`/`version`、
+> instance の 依存閉包）＋ `manifestDigest`（spec との drift 検出用）を**冪等に** pin する。
+> 外部パッケージの**内容ハッシュ（digest）は juice の責務ではない**：pin は各エコシステムの build に委譲する
+> （Python なら Dockerfile 内の `uv`／`uv.lock`、npm なら `package-lock.json`）。juice は「bundle → build →
+> AI-ready コンテナ」が核心で、外側から digest を二重管理しない（関心の分離）。`manifestDigest` のみ juice
+> 自身の宣言を冪等に pin する。
 >
 > **実装メモ（C003）:** `juice apply`（`src/core/apply.py` / CLI `juice apply [-f juice.yaml] [--dry-run]
 > [--no-prune]`）も実装済み。manifest の各レイヤを依存順（mcp_server → skill / subagent → mcp_bundled →
@@ -183,9 +182,9 @@ juice instance verify tokyo-weather-bot
 ## mcp_server のビルド副作用をどう扱うか（Agentfile なし）
 
 `npx` 取得や vendoring などの副作用は **runtime 側**（instance 起動時の解決）に寄せる。
-ビルド成果物を焼くのではなく、**lock で package バージョン/digest を pin** することで再現性を得る。
+ビルド成果物を焼くのではなく、**lock で package バージョンを pin** することで再現性を得る。
 
-- 取得の同一性 … `juice.lock` の digest。
+- 取得の同一性 … 各エコシステムの build（`uv.lock` / `package-lock.json` 等）に委譲。
 - 起動の同一性 … `command`/`env` は manifest に宣言済み。
 - 専用のビルド層（Agentfile / `juice build`）は持たない。
 
@@ -199,5 +198,4 @@ juice instance verify tokyo-weather-bot
 - `juice.yaml` を単一ファイルにするか、`kind:` 別の複数 manifest（k8s 風）を許すか。
 - `registries/` を生成物として ignore するか、commit するか。
 - `from: mcp_server:weather` の取り込み型 / 参照型（共有 server）の表現と既定。
-- `juice lock` の digest 取得元（npm / OCI / 独自）。
 - namespace 跨ぎ参照（`mcp_server:weather@other-ns`）を許すか。

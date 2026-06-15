@@ -14,7 +14,6 @@ import sys
 import yaml
 
 from ..core import LAYERS, Juice, LockError, ManifestError, load_manifest, write_lock
-from ..core.digest import npm_digest
 
 # 宣言ライフサイクル（juice.yaml）の典型フロー。トップレベル -h の epilog に出す。
 _WORKFLOW_EPILOG = """\
@@ -40,7 +39,8 @@ _EXAMPLES: dict[str, str] = {
         "  juice apply -f juice.yaml --dry-run       # 変更予定だけ表示\n"
         "  juice apply -f juice.yaml --frozen        # lock と drift していたらエラー"
     ),
-    "registry-verify": "例:\n  juice registry verify    # name とディレクトリ名の一致を検査",
+    "registry-verify": "例:\n  juice registry verify    # name=dir 一致＋インデックス drift を検査",
+    "registry-index": "例:\n  juice registry index -o juice.index.yml   # メタデータ索引を生成",
 }
 
 
@@ -71,16 +71,34 @@ def _cmd_all(juice: Juice) -> int:
     return 0
 
 
-def _cmd_registry_verify(juice: Juice) -> int:
-    """registry の name とディレクトリ名の一致を検証する（不一致があれば 1）。"""
+def _cmd_registry_verify(juice: Juice, index_path: str) -> int:
+    """name=ディレクトリ名の一致と、インデックスの drift を検証する（問題があれば 1）。"""
     issues = juice.verify_names()
-    if not issues:
-        print("ok: registry の name とディレクトリ名は一致しています")
-        return 0
-    print(f"{len(issues)} 件の name 不一致が見つかりました:", file=sys.stderr)
-    for issue in issues:
-        print(f"  - {issue.message()}", file=sys.stderr)
-    return 1
+    rc = 0
+    if issues:
+        print(f"{len(issues)} 件の name 不一致が見つかりました:", file=sys.stderr)
+        for issue in issues:
+            print(f"  - {issue.message()}", file=sys.stderr)
+        rc = 1
+    status = juice.index_status(index_path)
+    if status["present"] and status["drift"]:
+        print(
+            f"インデックスが registry と一致しません（drift）。"
+            f"`juice registry index` で更新してください: {index_path}",
+            file=sys.stderr,
+        )
+        rc = 1
+    if rc == 0:
+        msg = "name=dir 一致" + ("／インデックスも最新" if status["present"] else "")
+        print(f"ok: registry は健全です（{msg}）")
+    return rc
+
+
+def _cmd_registry_index(juice: Juice, out: str) -> int:
+    """registry のメタデータインデックスを生成する。"""
+    result = juice.index(out)
+    print(f"indexed: {out} ({result['count']} packages, {result['digest']})")
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -116,18 +134,26 @@ def build_parser() -> argparse.ArgumentParser:
         "-f", "--file", default="juice.yaml", help="manifest のパス（既定: juice.yaml）"
     )
     lp.add_argument("-o", "--out", default="juice.lock", help="出力先（既定: juice.lock）")
-    lp.add_argument(
-        "--resolve-digests",
-        action="store_true",
-        help="外部パッケージ（npm）の digest を取得して lock に記録する（要ネットワーク）",
-    )
 
-    rgp = layer_subs.add_parser("registry", help="registries（生成物）を検査する")
+    rgp = layer_subs.add_parser("registry", help="registries（生成物）を検査・索引する")
     rgp_subs = rgp.add_subparsers(dest="action", required=True, metavar="ACTION")
-    rgp_subs.add_parser(
+    rvp = rgp_subs.add_parser(
         "verify",
-        help="各パッケージの name がディレクトリ名と一致するか検証する",
+        help="name とディレクトリ名の一致＋インデックスの drift を検証する",
         **_raw(epilog=_EXAMPLES["registry-verify"]),
+    )
+    rvp.add_argument(
+        "--index",
+        default="juice.index.yml",
+        help="drift を照合するインデックスのパス（存在すれば検査。既定: juice.index.yml）",
+    )
+    rip = rgp_subs.add_parser(
+        "index",
+        help="メタデータインデックスを冪等生成する（既定: juice.index.yml）",
+        **_raw(epilog=_EXAMPLES["registry-index"]),
+    )
+    rip.add_argument(
+        "-o", "--out", default="juice.index.yml", help="出力先（既定: juice.index.yml）"
     )
 
     for verb, help_text in (
@@ -328,11 +354,10 @@ def _cmd_manifest_validate(file: str) -> int:
     return 0
 
 
-def _cmd_lock(file: str, out: str, resolve_digests: bool = False) -> int:
+def _cmd_lock(file: str, out: str) -> int:
     """juice.yaml を解決して juice.lock を生成する（不正なら 1）。"""
-    resolver = npm_digest if resolve_digests else None
     try:
-        result = write_lock(file, out, digest_resolver=resolver)
+        result = write_lock(file, out)
     except ManifestError as e:
         return _fail_manifest(file, e)
     print(f"locked: {out} ({result['manifestDigest']})")
@@ -376,7 +401,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     if args.layer == "lock":
-        return _cmd_lock(args.file, args.out, args.resolve_digests)
+        return _cmd_lock(args.file, args.out)
 
     if args.layer in ("apply", "plan"):
         return _cmd_apply(args)
@@ -384,8 +409,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.layer == "manifest" and args.action == "validate":
         return _cmd_manifest_validate(args.file)
 
-    if args.layer == "registry" and args.action == "verify":
-        return _cmd_registry_verify(Juice())
+    if args.layer == "registry":
+        if args.action == "verify":
+            return _cmd_registry_verify(Juice(), args.index)
+        if args.action == "index":
+            return _cmd_registry_index(Juice(), args.out)
 
     if args.action == "list":
         juice = Juice()

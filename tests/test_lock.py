@@ -51,7 +51,6 @@ def test_build_lock_structure():
     assert [s.name for s in lock.mcp_servers] == ["weather"]
     server = lock.mcp_servers[0]
     assert server.package == "@example/mcp-weather"
-    assert server.digest is None  # 外部 digest 取得は未実装（TODO）
 
     assert len(lock.instances) == 1
     inst = lock.instances[0]

@@ -49,7 +49,7 @@ flowchart TB
 | tool → mcp_server | N : 1 | その tool を公開している mcp_server（remote or 別の mcp_bundled）＝再帰 |
 
 - **mcp_server = 公開インターフェース。** remote でも bundled でも、消費側からは同一に見える。
-- **remote** … 既存の MCP server を黒箱として参照（実体は内包せず digest で pin）。
+- **remote** … 既存の MCP server を黒箱として参照（実体は内包せず `package`/`version` で参照）。
 - **bundled（mcp_bundled）** … subagent / skill は内包（vendoring）、tool は別の mcp_server が公開（再帰）。
 
 ## 関係の 2 レベル（参照 vs バンドル）
@@ -78,7 +78,7 @@ MCP server を連携した会話エージェントを起動する。詳細は [b
 （source of truth）。`registries/` は手で書く一次情報ではなく、apply の**出力先**（生成物）。
 
 ```
-juice.yaml ──lock──▶ juice.lock（解決＋digest）──plan──▶ 差分 ──apply──▶ registries/（冪等 reconcile＋prune）
+juice.yaml ──lock──▶ juice.lock（解決＋manifestDigest）──plan──▶ 差分 ──apply──▶ registries/（冪等 reconcile＋prune）
 ```
 
 | 段階 | コマンド | 何をする | 実装 |

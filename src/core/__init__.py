@@ -10,8 +10,8 @@ from __future__ import annotations
 from . import bundle as _bundle
 from .apply import apply_manifest
 from .config import ALL_ORDER, LAYERS, Config
-from .digest import DigestResolver, npm_digest, null_resolver
 from .factory import create_registries, create_registry, create_storage
+from .index import build_index, index_status, write_index
 from .lock import (
     Lock,
     LockError,
@@ -50,13 +50,13 @@ __all__ = [
     "dump_lock",
     "write_lock",
     "lock_status",
-    "DigestResolver",
-    "npm_digest",
-    "null_resolver",
     "NameIssue",
     "parse_metadata",
     "extract_name",
     "verify_names",
+    "build_index",
+    "write_index",
+    "index_status",
     "apply_manifest",
     "Version",
     "SemverError",
@@ -94,6 +94,14 @@ class Juice:
         不一致（name 欠落 / dir と不一致）を列挙して返す。自動修正はしない。
         """
         return verify_names(self.registries)
+
+    def index(self, out_path: str = "juice.index.yml") -> dict:
+        """registry のメタデータインデックスを生成して書き出す（E004 要件 4）。"""
+        return write_index(self.registries, out_path)
+
+    def index_status(self, path: str = "juice.index.yml") -> dict:
+        """registry の現状とインデックスファイルの drift 状態を返す。"""
+        return index_status(self.registries, path)
 
     def apply(
         self,
