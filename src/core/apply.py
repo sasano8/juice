@@ -10,7 +10,8 @@ mcp_bundled → instance）に下層から registry レイアウトへ materiali
 - skill      → `skills/<name>/SKILL.md`
 - mcp_bundled→ `mcp_bundled/<name>/bundle.yml`
 - instance   → `instances/<name>/index.yml`
-- workflow   → `workflows/<name>/index.md`（frontmatter: kind/name/type/schedule/steps）
+- workflow   → `workflows/<name>/index.md`（frontmatter: kind/name/type/steps）
+- schedule   → `schedules/<name>/index.md`（frontmatter: kind/name/type/schedule/steps）
 
 `dry_run=True` なら書き込まず、行われる変更（written / pruned）だけを返す。
 
@@ -29,6 +30,7 @@ from .manifest import (
     Manifest,
     McpBundledSpec,
     McpServerSpec,
+    ScheduleSpec,
     SkillSpec,
     SubagentSpec,
     WorkflowSpec,
@@ -36,7 +38,7 @@ from .manifest import (
 from .registry import RegistryArray
 
 # (manifest 属性, registry レイヤ) を依存順（下層 → 上層）に並べる。
-# workflow は instance/mcp_bundled を協調する最上位なので末尾に置く。
+# workflow / schedule は mcp_bundled を参照する最上位なので末尾に置く。
 _LAYER_ORDER: list[tuple[str, str]] = [
     ("mcp_servers", "tool"),
     ("skills", "skill"),
@@ -44,6 +46,7 @@ _LAYER_ORDER: list[tuple[str, str]] = [
     ("mcp_bundled", "mcp_bundled"),
     ("instances", "instance"),
     ("workflows", "workflow"),
+    ("schedules", "schedule"),
 ]
 
 
@@ -99,6 +102,8 @@ def _materialize(layer: str, item, ns: str) -> str:
         return _instance(item)
     if layer == "workflow":
         return _workflow(item)
+    if layer == "schedule":
+        return _schedule(item)
     raise ValueError(f"unknown layer: {layer}")  # 到達しない（_LAYER_ORDER に閉じている）
 
 
@@ -183,6 +188,16 @@ def _workflow(w: WorkflowSpec) -> str:
         for s in w.steps
     ]
     return _frontmatter(meta, f"# {w.name}\n")
+
+
+def _schedule(s: ScheduleSpec) -> str:
+    # schedule は .md concept doc。`type` は OKF 必須。cron（いつ動かすか）を持つトリガ。
+    meta: dict = {"kind": "schedule", "name": s.name, "type": "schedule", "schedule": s.schedule}
+    meta["steps"] = [
+        {"mcp_bundled": st.mcp_bundled, **({"input": dict(st.input)} if st.input else {})}
+        for st in s.steps
+    ]
+    return _frontmatter(meta, f"# {s.name}\n")
 
 
 # --- 小さなヘルパ --------------------------------------------------------------

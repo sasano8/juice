@@ -13,6 +13,7 @@ from .config import ALL_ORDER, LAYERS, Config
 from .deploy import (
     build_deployment,
     build_schedule_deployment,
+    dependency_closure,
     write_deployment,
     write_schedule_deployment,
 )
@@ -74,6 +75,7 @@ __all__ = [
     "index_status",
     "build_deployment",
     "build_schedule_deployment",
+    "dependency_closure",
     "write_deployment",
     "write_schedule_deployment",
     "apply_manifest",

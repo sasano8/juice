@@ -14,6 +14,7 @@ from src.core.deploy import (
     build_schedule_compose,
     build_schedule_deployment,
     build_schedule_k8s,
+    dependency_closure,
     find_schedule,
     find_workflow,
     write_deployment,
@@ -173,3 +174,46 @@ def test_write_schedule_deployment(tmp_path: Path):
 def test_find_schedule_missing():
     with pytest.raises(KeyError):
         find_schedule(_manifest(), "ghost")
+
+
+# --- 依存閉包（宣言 → 依存物を遡る） -------------------------------------------
+
+_RICH = """\
+apiVersion: juice/v1
+mcp_servers:
+  - name: weather
+    command: npx -y @example/mcp-weather
+subagents:
+  - name: forecaster
+    allow_tools: [weather]
+skills:
+  - name: report-weather
+mcp_bundled:
+  - name: weather-bot
+    subagent: forecaster
+    skills: [report-weather]
+    tools:
+      - bind: weather
+        from: mcp_server:weather
+schedules:
+  - name: morning-brief
+    schedule: "0 7 * * *"
+    steps:
+      - mcp_bundled: weather-bot
+"""
+
+
+def test_dependency_closure_traces_deps():
+    m = parse_manifest(_RICH)
+    closure = dependency_closure(m, find_schedule(m, "morning-brief").steps)
+    # 宣言（schedule）→ mcp_bundled → subagent / skill / tool を遡って解決する。
+    assert closure["mcp_bundled"] == ["weather-bot"]  # build 対象
+    assert closure["subagent"] == ["forecaster"]
+    assert closure["skill"] == ["report-weather"]
+    assert closure["tool"] == ["weather"]
+
+
+def test_write_deployment_includes_closure(tmp_path):
+    m = parse_manifest(_RICH)
+    r = write_schedule_deployment(m, "morning-brief", out_dir=str(tmp_path), target="k8s")
+    assert r["closure"]["mcp_bundled"] == ["weather-bot"]

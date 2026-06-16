@@ -20,6 +20,7 @@ LAYERS: dict[str, str] = {
     "subagent": "subagents",
     "mcp_bundled": "mcp_bundled",
     "workflow": "workflows",
+    "schedule": "schedules",
     "instance": "instances",
 }
 
@@ -30,6 +31,7 @@ ENTRY_FILES: dict[str, str] = {
     "subagent": "index.md",
     "mcp_bundled": "bundle.yml",  # 定義 + ビルド宣言（純 YAML）
     "workflow": "index.md",
+    "schedule": "index.md",  # 定期実行ワークロード（cron＋steps）の宣言
     "instance": "index.yml",
 }
 
@@ -37,6 +39,7 @@ ENTRY_FILES: dict[str, str] = {
 ALL_ORDER: list[str] = [
     "instance",
     "workflow",
+    "schedule",
     "mcp_bundled",
     "subagent",
     "skill",

@@ -95,9 +95,14 @@ juice.yaml ──lock──▶ juice.lock（解決＋manifestDigest）──plan
 | 反映 | `juice apply`    | 依存順に registries へ materialize、宣言外は prune（冪等）  | `src/core/apply.py`（C003） |
 | 検証 | `juice manifest validate` | 構造・相互参照・version 制約を検証                 | `src/core/manifest.py`（C001/C006） |
 
-`apply` は **依存順（mcp_server → skill / subagent → mcp_bundled → instance → workflow）** に
+`apply` は **依存順（mcp_server → skill / subagent → mcp_bundled → instance → workflow → schedule）** に
 下層から reconcile する（概念モデルの「下位層に依存」と同じ向き）。manifest パーサ（manifest.py）は
 registry / storage に依存しない独立モジュールで、層の分離を保つ。
+
+逆向きに、**宣言（workflow / schedule）から依存物を遡って解決**できる（`deploy.dependency_closure`）。
+schedule/workflow の steps が参照する mcp_bundled を起点に、その subagent / skill / tool まで辿る。
+**ビルド対象は mcp_bundled**（`bundle` が依存を vendoring して image 化）で、`juice workflow build` /
+`juice schedule build` は生成時にこの「遡った build 対象」を表示する（実 docker ビルドの起動は別途）。
 
 ### 概念モデルと宣言の対応
 
@@ -171,8 +176,8 @@ flowchart TB
 > 持ち物ではなく、**scheduler の持ち物＝別概念 `schedules:`**（`ScheduleSpec`）。
 > - **workflow**（`workflows:` / `WorkflowSpec`）… 複数 mcp_bundled を**常駐**させる定義（時間非依存）。
 >   `apply` が `workflows/<name>/index.md`（frontmatter kind/name/type/steps）へ materialize。
-> - **schedule**（`schedules:` / `ScheduleSpec`）… `schedule`（cron）＋ steps で**定期実行**を宣言するトリガ。
->   （registry レイヤ化＝apply materialize は別サイクル。現状は manifest＋deploy 生成のみ）
+> - **schedule**（`schedules:` / `ScheduleSpec`）… `schedule`（cron）＋ steps で**定期実行**を宣言するトリガ
+>   （ワークロード・ジョブ）。`apply` が `schedules/<name>/index.md`（kind/name/type/schedule/steps）へ materialize。
 >
 > **実行モデル（E001 第二〜四歩）:** juice は **実行しない**。宣言から実行基盤が食える**デプロイ成果物を生成**
 > する（`src/core/deploy.py` / CLI `juice workflow build` / `juice schedule build`）。常駐・協調・監視・定期実行は

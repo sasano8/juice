@@ -177,20 +177,6 @@ def build_parser() -> argparse.ArgumentParser:
         "-o", "--out", default="juice.index.yml", help="出力先（既定: juice.index.yml）"
     )
 
-    scp = layer_subs.add_parser("schedule", help="定期実行（schedule）のデプロイ成果物を生成する")
-    scp_subs = scp.add_subparsers(dest="action", required=True, metavar="ACTION")
-    sbp = scp_subs.add_parser(
-        "build",
-        help="schedule からデプロイ成果物（k8s CronJob 等）を生成する",
-        **_raw(epilog=_EXAMPLES["schedule-build"]),
-    )
-    sbp.add_argument("name", help="schedule 名")
-    sbp.add_argument(
-        "-f", "--file", default="juice.yaml", help="manifest のパス（既定: juice.yaml）"
-    )
-    sbp.add_argument("-o", "--out", default="deploy", help="出力ルート（既定: deploy/<name>/）")
-    sbp.add_argument("--target", default="compose", help="実行基盤 target（既定: compose）")
-
     for verb, help_text in (
         ("apply", "juice.yaml の desired state を registries へ冪等反映する"),
         ("plan", "apply を書き込まず実行し、行われる変更（差分）を表示する"),
@@ -224,20 +210,20 @@ def build_parser() -> argparse.ArgumentParser:
         lp = layer_subs.add_parser(layer, help=f"{layer} パッケージを操作する")
         action_subs = lp.add_subparsers(dest="action", required=True, metavar="ACTION")
         action_subs.add_parser("list", help=f"{layer} 一覧を表示する")
-        if layer == "workflow":
-            wbp = action_subs.add_parser(
+        if layer in ("workflow", "schedule"):
+            bp = action_subs.add_parser(
                 "build",
-                help="workflow からデプロイ成果物（docker-compose.yml）を生成する",
-                **_raw(epilog=_EXAMPLES["workflow-build"]),
+                help=f"{layer} からデプロイ成果物（compose / k8s）を生成する",
+                **_raw(epilog=_EXAMPLES[f"{layer}-build"]),
             )
-            wbp.add_argument("name", help="workflow 名")
-            wbp.add_argument(
+            bp.add_argument("name", help=f"{layer} 名")
+            bp.add_argument(
                 "-f", "--file", default="juice.yaml", help="manifest のパス（既定: juice.yaml）"
             )
-            wbp.add_argument(
+            bp.add_argument(
                 "-o", "--out", default="deploy", help="出力ルート（既定: deploy/<name>/）"
             )
-            wbp.add_argument("--target", default="compose", help="実行基盤 target（既定: compose）")
+            bp.add_argument("--target", default="compose", help="実行基盤 target（既定: compose）")
         if layer == "mcp_bundled":
             ip = action_subs.add_parser(
                 "init", help="bundle.yml の雛形を生成して成果物を初期化する"
@@ -416,6 +402,16 @@ def _cmd_lock(file: str, out: str) -> int:
     return 0
 
 
+def _print_closure(closure: dict) -> None:
+    """依存閉包（宣言 → 遡って解決した build 対象）を表示する。"""
+    targets = closure.get("mcp_bundled", [])
+    print(f"  build targets (mcp_bundled): {', '.join(targets) or '(none)'}")
+    layers = ("subagent", "skill", "tool")
+    deps = [f"{k}: {', '.join(closure[k])}" for k in layers if closure.get(k)]
+    if deps:
+        print(f"    ← deps  {'; '.join(deps)}")
+
+
 def _cmd_workflow_build(name: str, file: str, out: str, target: str) -> int:
     """workflow からデプロイ成果物（docker-compose.yml 等）を生成する（不正なら 1）。"""
     try:
@@ -429,6 +425,7 @@ def _cmd_workflow_build(name: str, file: str, out: str, target: str) -> int:
     except ValueError as e:  # 未対応 target
         return _fail(str(e))
     print(f"deployed: {result['out']} (target={result['target']}, {result['services']} services)")
+    _print_closure(result["closure"])
     return 0
 
 
@@ -445,6 +442,7 @@ def _cmd_schedule_build(name: str, file: str, out: str, target: str) -> int:
     except ValueError as e:  # 未対応 target
         return _fail(str(e))
     print(f"deployed: {result['out']} (target={result['target']}, {result['services']} services)")
+    _print_closure(result["closure"])
     return 0
 
 

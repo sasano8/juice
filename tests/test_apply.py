@@ -182,3 +182,37 @@ def test_apply_workflow_is_idempotent(regs):
     r2 = apply_manifest(regs, m)
     assert r2["written"] == []
     assert r2["pruned"] == []
+
+
+# schedule（定期実行＝ワークロード・ジョブ）を registry レイヤとして materialize する。
+MANIFEST_WITH_SCHEDULE = (
+    MANIFEST
+    + """
+schedules:
+  - name: morning-brief
+    schedule: "0 7 * * *"
+    steps:
+      - mcp_bundled: weather-bot
+        input:
+          city: "Tokyo"
+"""
+)
+
+
+def test_apply_materializes_schedule(regs):
+    r = apply_manifest(regs, parse_manifest(MANIFEST_WITH_SCHEDULE))
+    assert "schedule/morning-brief" in r["written"]
+    assert regs.exists("schedule", "morning-brief")
+    text = regs.read("schedule", "morning-brief")
+    assert "kind: schedule" in text
+    assert "type: schedule" in text  # OKF 必須の concept type
+    assert "schedule:" in text  # cron を持つ（workflow との違い）
+    assert "mcp_bundled: weather-bot" in text
+
+
+def test_apply_schedule_is_idempotent(regs):
+    m = parse_manifest(MANIFEST_WITH_SCHEDULE)
+    apply_manifest(regs, m)
+    r2 = apply_manifest(regs, m)
+    assert r2["written"] == []
+    assert r2["pruned"] == []

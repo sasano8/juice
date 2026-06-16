@@ -91,7 +91,7 @@ def test_verify_names_detects_missing(bucket: str) -> None:
 
 def test_okf_md_layers_are_md_backed() -> None:
     # OKF 対象は .md concept document のレイヤのみ（純 YAML マニフェストは対象外）。
-    assert set(OKF_MD_LAYERS) == {"tool", "skill", "subagent", "workflow"}
+    assert set(OKF_MD_LAYERS) == {"tool", "skill", "subagent", "workflow", "schedule"}
     assert "mcp_bundled" not in OKF_MD_LAYERS
     assert "instance" not in OKF_MD_LAYERS
 

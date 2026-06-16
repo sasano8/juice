@@ -47,6 +47,36 @@ def find_schedule(manifest: Manifest, name: str) -> ScheduleSpec:
     raise KeyError(name)
 
 
+def dependency_closure(manifest: Manifest, steps: list) -> dict:
+    """steps が参照する mcp_bundled と、その依存（subagent/skill/tool）を**遡って**解決する。
+
+    返り値 `{mcp_bundled, subagent, skill, tool}`（各レイヤの名前リスト、宣言順・重複なし）。
+    **ビルド対象は mcp_bundled**（`bundle` が subagent/skill/tool を vendoring して image 化）。
+    「宣言 → 依存物を遡る」の起点になる。実 docker ビルドの起動はしない（呼び出し側の責務）。
+    """
+    bundles = {b.name: b for b in manifest.mcp_bundled}
+    wanted: list[str] = []
+    for st in steps:
+        if st.mcp_bundled not in wanted:
+            wanted.append(st.mcp_bundled)
+    subagents: list[str] = []
+    skills: list[str] = []
+    tools: list[str] = []
+    for name in wanted:
+        b = bundles.get(name)
+        if b is None:
+            continue
+        if b.subagent and b.subagent not in subagents:
+            subagents.append(b.subagent)
+        for sk in b.skills:
+            if sk not in skills:
+                skills.append(sk)
+        for t in b.tools:
+            if t.from_name not in tools:
+                tools.append(t.from_name)
+    return {"mcp_bundled": wanted, "subagent": subagents, "skill": skills, "tool": tools}
+
+
 def _image(bundle: McpBundledSpec) -> str:
     """mcp_bundled の image 名（規約 `juice/<name>`、version があれば tag を付ける）。"""
     base = f"juice/{bundle.name}"
@@ -234,7 +264,9 @@ def write_deployment(
     """workflow のデプロイ成果物を `out_dir/<name>/<file>` に冪等書き出し。要約を返す。"""
     workflow = find_workflow(manifest, workflow_name)
     filename, text = build_deployment(manifest, workflow, target)
-    return _write(out_dir, workflow.name, filename, text, target, len(workflow.steps))
+    res = _write(out_dir, workflow.name, filename, text, target, len(workflow.steps))
+    res["closure"] = dependency_closure(manifest, workflow.steps)
+    return res
 
 
 def write_schedule_deployment(
@@ -246,4 +278,6 @@ def write_schedule_deployment(
     """schedule のデプロイ成果物を `out_dir/<name>/<file>` に冪等書き出し。要約を返す。"""
     schedule = find_schedule(manifest, schedule_name)
     filename, text = build_schedule_deployment(manifest, schedule, target)
-    return _write(out_dir, schedule.name, filename, text, target, len(schedule.steps))
+    res = _write(out_dir, schedule.name, filename, text, target, len(schedule.steps))
+    res["closure"] = dependency_closure(manifest, schedule.steps)
+    return res
