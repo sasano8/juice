@@ -70,6 +70,48 @@ def test_build_compose_image_without_version():
     assert compose["services"]["news-bot"]["image"] == "juice/news-bot"
 
 
+def test_build_compose_serial_depends_on():
+    # step 間は宣言順の直列 depends_on（2 番目以降が直前に依存）。先頭は持たない。
+    m = _manifest()
+    services = build_compose(m, find_workflow(m, "live-bots"))["services"]
+    assert "depends_on" not in services["mcp_weather-bot"]  # 先頭
+    assert services["news-bot"]["depends_on"] == ["mcp_weather-bot"]  # 直前に依存
+
+
+def test_build_compose_single_step_has_no_depends_on():
+    m = parse_manifest(
+        "apiVersion: juice/v1\n"
+        "bundles:\n  - name: bot\n"
+        "workflows:\n  - name: solo\n    steps:\n      - bundle: bot\n"
+    )
+    svc = build_compose(m, find_workflow(m, "solo"))["services"]["bot"]
+    assert "depends_on" not in svc
+
+
+def test_build_compose_depends_on_chains_numbered_services():
+    # 同一 bundle の連番 service でも宣言順に決定的に連鎖する（bot → bot-2 → bot-3）。
+    m = parse_manifest(
+        "apiVersion: juice/v1\n"
+        "bundles:\n  - name: bot\n"
+        "workflows:\n  - name: w\n    steps:\n"
+        "      - bundle: bot\n      - bundle: bot\n      - bundle: bot\n"
+    )
+    services = build_compose(m, find_workflow(m, "w"))["services"]
+    assert "depends_on" not in services["bot"]
+    assert services["bot-2"]["depends_on"] == ["bot"]
+    assert services["bot-3"]["depends_on"] == ["bot-2"]
+
+
+def test_k8s_and_schedule_have_no_depends_on():
+    # depends_on は workflow/compose 限定。k8s（Deployment）と schedule には付かない。
+    m = _manifest()
+    for dep in build_k8s(m, find_workflow(m, "live-bots")):
+        assert "depends_on" not in dep["spec"]
+        assert "dependsOn" not in dep["spec"]
+    sched = build_schedule_compose(m, find_schedule(m, "morning-brief"))
+    assert all("depends_on" not in s for s in sched["services"].values())
+
+
 def test_build_deployment_compose_filename_and_header():
     m = _manifest()
     filename, text = build_deployment(m, find_workflow(m, "live-bots"))

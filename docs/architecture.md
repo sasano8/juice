@@ -192,13 +192,16 @@ flowchart TB
 > 外部基盤（compose / k8s＋ArgoCD / 外部 cron）に委譲する。**target は pluggable**（`compose` / `k8s`）：
 > - **workflow → compose**：`deploy/<name>/docker-compose.yml`。各 step の image（規約 `juice/<name>[:version]`）を
 >   長期常駐 service（`restart: unless-stopped`）に。`input`→env、label `juice.workflow`。
+>   step 間は **宣言順の直列 `depends_on`**（2 番目以降が直前の service に依存。先頭は持たない）。
 > - **workflow → k8s**：`manifests.yaml`（multi-doc）。各 step を **Deployment**（replicas:1）に。
+>   k8s には `depends_on` 相当が無いので**順序は持たない**（必要なら Argo 等で別途）。
 > - **schedule → k8s**：各 step を **CronJob**（`schedule` を cron に）。
 > - **schedule → compose**：compose に cron は無いので自動起動しない one-shot service（`restart: "no"`＋
 >   `profiles: [scheduled]`、cron は label）。外部 cron が `docker compose run` で起動する想定。
 >
-> いずれも **生成のみ**。実起動（`up`/`kubectl apply`）・スケジューラ稼働・step 協調（順序・データ受け渡し）は
-> 次段階（YAGNI）。現状 step は独立 service / Deployment / CronJob のまま。
+> **step 協調の現状:** workflow/compose の `depends_on` は compose の意味での**起動順**にすぎず、「完了待ち」
+> ではない。pipeline 的な完了待ち・データ受け渡し・DAG（直列でなく分岐）・実起動（`up`/`kubectl apply`）・
+> スケジューラ稼働は次段階（YAGNI）。compose 以外（k8s / schedule）の step は独立リソースのまま。
 
 > **スケジューラの 2 ターゲット（分類）:** 「何を定期実行するか」で 2 種に分かれる。
 > - **(A) ワークロード・ジョブ**（データプレーン）… デプロイ済みコンテナを定期実行する。**`schedules:` がこれ**

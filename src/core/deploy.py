@@ -110,15 +110,25 @@ def _container(svc: str, bundle: BundleSpec, step_input: dict) -> dict:
 
 
 def build_compose(manifest: Manifest, workflow: WorkflowSpec) -> dict:
-    """workflow を docker-compose（v2）の dict へ決定的に変換する（常駐 service）。"""
+    """workflow を docker-compose（v2）の dict へ決定的に変換する（常駐 service）。
+
+    step 間の協調＝**宣言順の直列 `depends_on`**（2 番目以降の service が直前の service に依存）。
+    これは compose の意味での**起動順**であって「完了待ち」ではない（pipeline 的な完了待ち・
+    データ受け渡しは別概念）。順序モデルは直列のみ（DAG は YAGNI）。単一 step には付かない。
+    k8s（build_k8s）には depends_on 相当が無いので**順序を持たない**（Argo 等で別途）。
+    """
     bundles = {b.name: b for b in manifest.bundles}
     services: dict = {}
+    prev: str | None = None
     for svc, step in _named_steps(workflow.steps):
         service: dict = {"image": _image(bundles[step.bundle]), "restart": "unless-stopped"}
         if step.input:
             service["environment"] = {k: str(v) for k, v in step.input.items()}
+        if prev is not None:
+            service["depends_on"] = [prev]  # 宣言順の直列起動（直前の service に依存）
         service["labels"] = {"juice.workflow": workflow.name}
         services[svc] = service
+        prev = svc
     return {"name": workflow.name, "services": services}
 
 
