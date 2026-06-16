@@ -15,8 +15,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 # namespace を入れる容器ディレクトリ（K8s の API パス /namespaces/<ns>/... と同型）。
-# 物理レイアウトは {bucket}/{NAMESPACE_CONTAINER}/{namespace}/{layer}/{name}/ になる。
+# 物理レイアウトは {bucket}/{NAMESPACE_CONTAINER}/{namespace}/{layer}/{name}/。
+# <layer> 自体が 1 つの registry（tools / bundles / 将来 datasets / python_packages …）。
 NAMESPACE_CONTAINER = "namespaces"
+
+
+def namespace_root(bucket: str, namespace: str) -> str:
+    """`{bucket}/namespaces/{namespace}` の論理パスを組む（bucket が '.'／'' なら省く）。
+
+    local 既定は bucket='.'（カレント）なので最上位は `namespaces/<ns>/...` になる。
+    """
+    parts = [p for p in (bucket, NAMESPACE_CONTAINER, namespace) if p not in ("", ".")]
+    return "/".join(parts)
+
 
 # CLI で使う単数形コマンド名（＝レイヤキー） -> レジストリ上のディレクトリ名（複数形）
 LAYERS: dict[str, str] = {

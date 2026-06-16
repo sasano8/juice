@@ -6,19 +6,20 @@ backend 名から Storage 実装を選ぶ単一の差し込み点。S3 等を足
 
 from __future__ import annotations
 
-from .config import ALL_ORDER, LAYERS, NAMESPACE_CONTAINER, Config
+from .config import ALL_ORDER, LAYERS, Config, namespace_root
 from .registry import Registry, RegistryArray
 from .storage import LocalStorage, Storage
 
 # 既定値。どこにレジストリがあるか／どの区画かの既定はここが持つ。
-DEFAULT_BUCKET = "registries"
+# local 既定の bucket は '.'（カレント）。最上位は namespaces/<ns>/<layer>/... になる。
+DEFAULT_BUCKET = "."
 DEFAULT_NAMESPACE = "default"
 
 
 def create_storage(config: Config) -> Storage:
     if config.backend == "local":
-        # local は bucket/namespaces/namespace を基点にし、その配下の path（レイヤ）を引く。
-        return LocalStorage(root=f"{config.bucket}/{NAMESPACE_CONTAINER}/{config.namespace}")
+        # local は namespaces/<ns> を基点にし、その配下の path（レイヤ＝registry）を引く。
+        return LocalStorage(root=namespace_root(config.bucket, config.namespace))
     raise NotImplementedError(f"backend not supported yet: {config.backend}")
 
 

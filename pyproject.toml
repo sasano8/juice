@@ -27,7 +27,7 @@ packages = ["src"]
 target-version = "py310"
 line-length = 100
 # 生成物（vendor/）と仮想環境は対象外
-extend-exclude = ["registries/**/vendor", ".venv"]
+extend-exclude = ["namespaces/**/vendor", ".venv"]
 
 [tool.ruff.lint]
 # E,F: pyflakes/pycodestyle, I: isort, UP: pyupgrade, B: bugbear, SIM: simplify
