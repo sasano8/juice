@@ -63,7 +63,7 @@ def test_verify_names_clean_registry_has_no_issues(bucket: str) -> None:
 
 
 def _write(bucket: str, rel: str, text: str) -> None:
-    target = Path(bucket) / "default" / rel
+    target = Path(bucket) / "namespaces" / "default" / rel
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(text, encoding="utf-8")
 

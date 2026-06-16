@@ -8,7 +8,7 @@ mcp_bundled → instance）に下層から registry レイアウトへ materiali
 - mcp_server → `tools/<name>/index.md`（frontmatter: kind/name/type/command/args/env）
 - subagent   → `subagents/<name>/index.md`（frontmatter＋本文 = prompt）
 - skill      → `skills/<name>/SKILL.md`
-- mcp_bundled→ `mcp_bundled/<name>/bundle.yml`
+- mcp_bundled→ `bundles/<name>/bundle.yml`
 - instance   → `instances/<name>/index.yml`
 - workflow   → `workflows/<name>/index.md`（frontmatter: kind/name/type/steps）
 - schedule   → `schedules/<name>/index.md`（frontmatter: kind/name/type/schedule/steps）
@@ -16,7 +16,7 @@ mcp_bundled → instance）に下層から registry レイアウトへ materiali
 `dry_run=True` なら書き込まず、行われる変更（written / pruned）だけを返す。
 
 > 注意: apply は registry をこの宣言の出力先として上書き・prune する。実レジストリ
-> （registries/default）を壊さないよう、テストは必ず tmp レジストリで行うこと。
+> （registries/namespaces/default）を壊さないよう、テストは必ず tmp レジストリで行うこと。
 > 外部 digest 取得（lock）や remote backend は範囲外（C002 / 将来）。
 """
 

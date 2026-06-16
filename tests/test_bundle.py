@@ -81,7 +81,7 @@ def test_build_command(juice: Juice, bucket: str) -> None:
     result = juice.build("weather-bot")
     assert result["image"] == "juice/weather-bot:latest"
     assert result["version"] == "0.0.1"
-    expected_ctx = f"{bucket}/default/mcp_bundled/weather-bot/vendor"
+    expected_ctx = f"{bucket}/namespaces/default/bundles/weather-bot/vendor"
     assert result["context"] == expected_ctx
     assert result["command"] == f"docker build -t juice/weather-bot:latest {expected_ctx}"
 

@@ -27,6 +27,8 @@ from .registry import RegistryArray
 
 SPEC_FILE = "bundle.yml"
 VENDOR_DIR = "vendor"
+# 表示用パスの接頭辞。レイヤキー mcp_bundled の実ディレクトリ名（= bundles）。
+_BUNDLE_DIR = LAYERS["mcp_bundled"]
 DEFAULT_INCLUDE = ["subagent", "skills", "tools"]
 DEFAULT_LLM = {
     "provider": "anthropic",
@@ -403,7 +405,7 @@ def _vendor(registries: RegistryArray, name: str) -> list[str]:
             raw = registries.read(layer, dep, rel)
             out = f"{VENDOR_DIR}/{LAYERS[layer]}/{dep}/{rel}"
             registries.write("mcp_bundled", name, out, raw)
-            vendored.append(f"mcp_bundled/{name}/{out}")
+            vendored.append(f"{_BUNDLE_DIR}/{name}/{out}")
     return vendored
 
 
@@ -415,7 +417,7 @@ def init(registries: RegistryArray, name: str, clean: bool = False) -> dict:
     exists = registries.exists("mcp_bundled", name, SPEC_FILE)
     if not clean and exists:
         raise FileExistsError(
-            f"already initialized: mcp_bundled/{name}/{SPEC_FILE} (use --clean to clean & reinitialize)"
+            f"already initialized: {_BUNDLE_DIR}/{name}/{SPEC_FILE} (use --clean to clean & reinitialize)"
         )
     if clean:
         spec_text = registries.read("mcp_bundled", name, SPEC_FILE) if exists else None
@@ -430,7 +432,7 @@ def init(registries: RegistryArray, name: str, clean: bool = False) -> dict:
             SPEC_FILE,
             BUNDLE_YML_TEMPLATE.format(namespace=registries.namespace, name=name),
         )
-    return {"kind": "init", "mcp_bundled": name, "spec": f"mcp_bundled/{name}/{SPEC_FILE}"}
+    return {"kind": "init", "mcp_bundled": name, "spec": f"{_BUNDLE_DIR}/{name}/{SPEC_FILE}"}
 
 
 def bundle(registries: RegistryArray, name: str) -> dict:
@@ -451,7 +453,7 @@ def bundle(registries: RegistryArray, name: str) -> dict:
         ("Dockerfile", DOCKERFILE),
     ):
         registries.write("mcp_bundled", name, f"{VENDOR_DIR}/{fname}", text)
-        generated.append(f"mcp_bundled/{name}/{VENDOR_DIR}/{fname}")
+        generated.append(f"{_BUNDLE_DIR}/{name}/{VENDOR_DIR}/{fname}")
 
     return {"kind": "bundle", "mcp_bundled": name, "vendored": vendored, "generated": generated}
 

@@ -31,7 +31,7 @@ def test_build_cache_projects_standard_fields(registries) -> None:
 
 def test_build_cache_includes_optional_okf_fields(bucket: str) -> None:
     # tags / description を持つ資産はキャッシュに射影される。
-    asset = Path(bucket) / "default" / "skills" / "tagged" / "SKILL.md"
+    asset = Path(bucket) / "namespaces" / "default" / "skills" / "tagged" / "SKILL.md"
     asset.parent.mkdir(parents=True, exist_ok=True)
     asset.write_text(
         "---\nkind: skill\nname: tagged\ntype: skill\n"
@@ -52,7 +52,7 @@ def test_filter_cache_by_type(registries) -> None:
 
 
 def test_filter_cache_by_tag(bucket: str) -> None:
-    asset = Path(bucket) / "default" / "tools" / "humidity" / "index.md"
+    asset = Path(bucket) / "namespaces" / "default" / "tools" / "humidity" / "index.md"
     asset.parent.mkdir(parents=True, exist_ok=True)
     asset.write_text(
         "---\nkind: tool\nname: humidity\ntype: mcp-server\ntags: [weather]\n---\n",

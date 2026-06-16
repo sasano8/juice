@@ -52,7 +52,7 @@ def test_index_status_detects_drift(bucket: str, tmp_path: Path) -> None:
     out = str(tmp_path / "juice.index.yml")
     write_index(registries, out)
     # registry 側に新パッケージを足すと index と drift する。
-    new = Path(bucket) / "default" / "skills" / "extra" / "SKILL.md"
+    new = Path(bucket) / "namespaces" / "default" / "skills" / "extra" / "SKILL.md"
     new.parent.mkdir(parents=True, exist_ok=True)
     new.write_text("---\nkind: skill\nname: extra\n---\n", encoding="utf-8")
     fresh = create_registries(bucket=bucket, namespace="default")

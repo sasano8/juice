@@ -43,9 +43,9 @@ def test_list_files_of_package(registries: RegistryArray) -> None:
 
 def test_location_is_physical_path(registries: RegistryArray, bucket: str) -> None:
     loc = registries.location("tool", "weather")
-    assert loc == f"{bucket}/default/tools/weather"
+    assert loc == f"{bucket}/namespaces/default/tools/weather"
     loc_entry = registries.location("tool", "weather", "server.py")
-    assert loc_entry == f"{bucket}/default/tools/weather/server.py"
+    assert loc_entry == f"{bucket}/namespaces/default/tools/weather/server.py"
 
 
 def test_write_and_remove_roundtrip(registries: RegistryArray) -> None:

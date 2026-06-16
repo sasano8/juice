@@ -12,7 +12,7 @@ import pytest
 
 from src.core import Juice, create_registries
 
-# 最小レジストリのファイル群（パス -> 内容）。実 registries/default を模した構成。
+# 最小レジストリのファイル群（パス -> 内容）。実 registries/namespaces/default を模した構成。
 _TOOL_INDEX = """\
 ---
 kind: tool
@@ -82,14 +82,14 @@ _LAYOUT = {
     "tools/weather/server.py": _TOOL_SERVER,
     "subagents/forecaster/index.md": _SUBAGENT_INDEX,
     "skills/report-weather/SKILL.md": _SKILL,
-    "mcp_bundled/weather-bot/bundle.yml": _BUNDLE_YML,
+    "bundles/weather-bot/bundle.yml": _BUNDLE_YML,
 }
 
 
 @pytest.fixture
 def bucket(tmp_path: Path) -> str:
     """default namespace に最小構成を書き出した bucket パスを返す。"""
-    ns = tmp_path / "default"
+    ns = tmp_path / "namespaces" / "default"
     for rel, content in _LAYOUT.items():
         target = ns / rel
         target.parent.mkdir(parents=True, exist_ok=True)

@@ -1,6 +1,6 @@
 """CLI のテスト。
 
-list 系は読み取り専用なのでリポジトリ同梱の実レジストリ（registries/default）に対して
+list 系は読み取り専用なのでリポジトリ同梱の実レジストリ（registries/namespaces/default）に対して
 実行する。init/bundle/build/run の中身は test_bundle.py で tmp レジストリを使って検証済み。
 """
 
@@ -29,7 +29,7 @@ def test_parser_run_defaults_to_api() -> None:
 
 
 def test_registry_verify_ok_on_real_registry(capsys: pytest.CaptureFixture[str]) -> None:
-    # 同梱の registries/default は name とディレクトリ名が一致しているので 0。
+    # 同梱の registries/namespaces/default は name とディレクトリ名が一致しているので 0。
     rc = main(["registry", "verify"])
     assert rc == 0
     assert "ok" in capsys.readouterr().out
@@ -97,9 +97,9 @@ def test_main_all_list_prints_labels(capsys: pytest.CaptureFixture[str]) -> None
     rc = main(["all", "list"])
     assert rc == 0
     out = capsys.readouterr().out
-    # 全レイヤのラベル見出しが出る
+    # 全レイヤのラベル見出しが出る（見出しは registry ディレクトリ名＝複数形）
     assert "== tools ==" in out
-    assert "== mcp_bundled ==" in out
+    assert "== bundles ==" in out
     assert "weather-bot" in out
 
 
