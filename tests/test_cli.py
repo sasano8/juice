@@ -40,6 +40,34 @@ def test_parser_run_rejects_unknown_mode() -> None:
         build_parser().parse_args(["mcp_bundled", "run", "weather-bot", "bogus"])
 
 
+def test_parser_workflow_build_has_build_deps_default_off() -> None:
+    args = build_parser().parse_args(["workflow", "build", "live-bots"])
+    assert args.action == "build"
+    assert args.build_deps is False  # 既定 off（docker 起動しない）
+
+
+_WF_MANIFEST = """\
+apiVersion: juice/v1
+mcp_bundled:
+  - name: weather-bot
+workflows:
+  - name: live-bots
+    steps:
+      - mcp_bundled: weather-bot
+"""
+
+
+def test_workflow_build_generates_without_build_deps(tmp_path, capsys) -> None:
+    # --build-deps なしなら docker を触らず成果物生成のみ（rc 0）。
+    juice_yaml = tmp_path / "juice.yaml"
+    juice_yaml.write_text(_WF_MANIFEST, encoding="utf-8")
+    out = tmp_path / "deploy"
+    rc = main(["workflow", "build", "live-bots", "-f", str(juice_yaml), "-o", str(out)])
+    assert rc == 0
+    assert (out / "live-bots" / "docker-compose.yml").exists()
+    assert "build targets (mcp_bundled): weather-bot" in capsys.readouterr().out
+
+
 def test_main_tool_list(capsys: pytest.CaptureFixture[str]) -> None:
     rc = main(["tool", "list"])
     assert rc == 0

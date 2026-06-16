@@ -224,6 +224,11 @@ def build_parser() -> argparse.ArgumentParser:
                 "-o", "--out", default="deploy", help="出力ルート（既定: deploy/<name>/）"
             )
             bp.add_argument("--target", default="compose", help="実行基盤 target（既定: compose）")
+            bp.add_argument(
+                "--build-deps",
+                action="store_true",
+                help="依存閉包の mcp_bundled を bundle→build まで起動する（docker。既定 off）",
+            )
         if layer == "mcp_bundled":
             ip = action_subs.add_parser(
                 "init", help="bundle.yml の雛形を生成して成果物を初期化する"
@@ -412,7 +417,20 @@ def _print_closure(closure: dict) -> None:
         print(f"    ← deps  {'; '.join(deps)}")
 
 
-def _cmd_workflow_build(name: str, file: str, out: str, target: str) -> int:
+def _build_deps(closure: dict) -> int:
+    """依存閉包の mcp_bundled を宣言順に bundle→build まで起動する（docker）。rc を集約。"""
+    juice = Juice()
+    rc = 0
+    for name in closure.get("mcp_bundled", []):
+        gen = juice.bundle(name)
+        print(f"(bundle) {name}: {len(gen.get('generated', []))} files", file=sys.stderr)
+        r = _exec(juice.build(name)["command"])
+        if r != 0:
+            rc = r
+    return rc
+
+
+def _cmd_workflow_build(name: str, file: str, out: str, target: str, build_deps: bool) -> int:
     """workflow からデプロイ成果物（docker-compose.yml 等）を生成する（不正なら 1）。"""
     try:
         manifest = load_manifest(file)
@@ -426,10 +444,10 @@ def _cmd_workflow_build(name: str, file: str, out: str, target: str) -> int:
         return _fail(str(e))
     print(f"deployed: {result['out']} (target={result['target']}, {result['services']} services)")
     _print_closure(result["closure"])
-    return 0
+    return _build_deps(result["closure"]) if build_deps else 0
 
 
-def _cmd_schedule_build(name: str, file: str, out: str, target: str) -> int:
+def _cmd_schedule_build(name: str, file: str, out: str, target: str, build_deps: bool) -> int:
     """schedule からデプロイ成果物（CronJob 等）を生成する（不正なら 1）。"""
     try:
         manifest = load_manifest(file)
@@ -443,7 +461,7 @@ def _cmd_schedule_build(name: str, file: str, out: str, target: str) -> int:
         return _fail(str(e))
     print(f"deployed: {result['out']} (target={result['target']}, {result['services']} services)")
     _print_closure(result["closure"])
-    return 0
+    return _build_deps(result["closure"]) if build_deps else 0
 
 
 def _cmd_apply(args) -> int:
@@ -507,10 +525,10 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_bundle(args.name, args.namespace)
 
     if args.layer == "workflow" and args.action == "build":
-        return _cmd_workflow_build(args.name, args.file, args.out, args.target)
+        return _cmd_workflow_build(args.name, args.file, args.out, args.target, args.build_deps)
 
     if args.layer == "schedule" and args.action == "build":
-        return _cmd_schedule_build(args.name, args.file, args.out, args.target)
+        return _cmd_schedule_build(args.name, args.file, args.out, args.target, args.build_deps)
 
     if args.action == "build":
         return _cmd_build(args.name, args.namespace, args.tag)
