@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from . import bundle as _bundle
 from .apply import apply_manifest
-from .catalog import build_catalog, filter_catalog
 from .config import ALL_ORDER, LAYERS, Config
 from .deploy import (
     build_deployment,
@@ -42,6 +41,7 @@ from .metadata import (
     verify_names,
     verify_okf,
 )
+from .okf_catalog_cache import build_okf_catalog_cache, filter_okf_catalog_cache
 from .registry import Registry, RegistryArray
 from .semver import SemverError, Version, is_valid, parse_version, satisfies
 from .storage import LocalStorage, Storage
@@ -74,8 +74,8 @@ __all__ = [
     "build_index",
     "write_index",
     "index_status",
-    "build_catalog",
-    "filter_catalog",
+    "build_okf_catalog_cache",
+    "filter_okf_catalog_cache",
     "build_deployment",
     "build_schedule_deployment",
     "dependency_closure",
@@ -134,9 +134,11 @@ class Juice:
         """registry の現状とインデックスファイルの drift 状態を返す。"""
         return index_status(self.registries, path)
 
-    def catalog(self, *, type_: str | None = None, tag: str | None = None) -> list[dict]:
-        """資産を標準スキーマで横断一覧する（type / tag で絞り込み可）。"""
-        return filter_catalog(build_catalog(self.registries), type_=type_, tag=tag)
+    def okf_catalog_cache(self, *, type_: str | None = None, tag: str | None = None) -> list[dict]:
+        """OKF カタログ・キャッシュ（AI 連携用の派生ビュー）を type / tag で絞って返す。"""
+        return filter_okf_catalog_cache(
+            build_okf_catalog_cache(self.registries), type_=type_, tag=tag
+        )
 
     def apply(
         self,

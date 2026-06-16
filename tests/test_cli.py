@@ -75,8 +75,8 @@ def test_main_tool_list(capsys: pytest.CaptureFixture[str]) -> None:
     assert "weather" in out
 
 
-def test_main_catalog_lists_assets(capsys: pytest.CaptureFixture[str]) -> None:
-    rc = main(["catalog"])
+def test_main_okf_cache_lists_assets(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(["okf-cache"])
     assert rc == 0
     out = capsys.readouterr().out
     # レイヤ横断で資産が並ぶ（layer/name＋concept type）。
@@ -84,8 +84,8 @@ def test_main_catalog_lists_assets(capsys: pytest.CaptureFixture[str]) -> None:
     assert "skill/report-weather" in out
 
 
-def test_main_catalog_filters_by_tag(capsys: pytest.CaptureFixture[str]) -> None:
-    rc = main(["catalog", "--tag", "weather"])
+def test_main_okf_cache_filters_by_tag(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(["okf-cache", "--tag", "weather"])
     assert rc == 0
     out = capsys.readouterr().out
     assert "tool/weather" in out
@@ -201,7 +201,7 @@ def test_toplevel_help_shows_workflow_examples() -> None:
         (["plan", "-h"], "juice plan -f juice.yaml"),
         (["apply", "-h"], "juice apply -f juice.yaml --dry-run"),
         (["manifest", "validate", "-h"], "juice manifest validate -f juice.yaml"),
-        (["catalog", "-h"], "juice catalog --type mcp-server"),
+        (["okf-cache", "-h"], "juice okf-cache --type mcp-server"),
     ],
 )
 def test_subcommand_help_has_example(argv, needle, capsys: pytest.CaptureFixture[str]) -> None:

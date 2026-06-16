@@ -52,11 +52,11 @@ _EXAMPLES: dict[str, str] = {
         "例:\n  juice registry verify    # name=dir 一致＋OKF 適合＋索引 drift を検査"
     ),
     "registry-index": "例:\n  juice registry index -o juice.index.yml   # メタデータ索引を生成",
-    "catalog": (
-        "例:\n"
-        "  juice catalog                    # 全資産を横断一覧（layer/name/type/説明）\n"
-        "  juice catalog --type mcp-server  # OKF concept type で絞り込み\n"
-        "  juice catalog --tag weather      # tag で絞り込み"
+    "okf-cache": (
+        "例（OKF カタログ・キャッシュ＝AI 連携用の派生ビュー。構造インベントリは all list）:\n"
+        "  juice okf-cache                    # 全資産の OKF メタデータを横断一覧\n"
+        "  juice okf-cache --type mcp-server  # OKF concept type で絞り込み\n"
+        "  juice okf-cache --tag weather      # tag で絞り込み"
     ),
     "workflow-build": (
         "例:\n  juice workflow build live-bots    # deploy/<name>/docker-compose.yml（常駐）を生成"
@@ -128,9 +128,9 @@ def _cmd_registry_index(juice: Juice, out: str) -> int:
     return 0
 
 
-def _cmd_catalog(juice: Juice, type_filter: str | None, tag: str | None) -> int:
-    """資産を標準スキーマで横断一覧する（type / tag で絞り込み）。"""
-    entries = juice.catalog(type_=type_filter, tag=tag)
+def _cmd_okf_cache(juice: Juice, type_filter: str | None, tag: str | None) -> int:
+    """OKF カタログ・キャッシュ（AI 連携用の派生ビュー）を横断一覧する（type / tag で絞り込み）。"""
+    entries = juice.okf_catalog_cache(type_=type_filter, tag=tag)
     if not entries:
         print("(no assets)", file=sys.stderr)
         return 0
@@ -197,9 +197,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     cap = layer_subs.add_parser(
-        "catalog",
-        help="資産のメタデータを横断一覧する（type / tag で絞り込み）",
-        **_raw(epilog=_EXAMPLES["catalog"]),
+        "okf-cache",
+        help="OKF カタログ・キャッシュ（AI 連携用ビュー）を横断一覧（type / tag で絞り込み）",
+        **_raw(epilog=_EXAMPLES["okf-cache"]),
     )
     cap.add_argument("--type", dest="type_filter", default=None, help="concept type で絞り込む")
     cap.add_argument("--tag", default=None, help="tag で絞り込む")
@@ -539,8 +539,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.action == "index":
             return _cmd_registry_index(Juice(), args.out)
 
-    if args.layer == "catalog":
-        return _cmd_catalog(Juice(), args.type_filter, args.tag)
+    if args.layer == "okf-cache":
+        return _cmd_okf_cache(Juice(), args.type_filter, args.tag)
 
     if args.action == "list":
         juice = Juice()
