@@ -52,6 +52,12 @@ _EXAMPLES: dict[str, str] = {
         "例:\n  juice registry verify    # name=dir 一致＋OKF 適合＋索引 drift を検査"
     ),
     "registry-index": "例:\n  juice registry index -o juice.index.yml   # メタデータ索引を生成",
+    "catalog": (
+        "例:\n"
+        "  juice catalog                    # 全資産を横断一覧（layer/name/type/説明）\n"
+        "  juice catalog --type mcp-server  # OKF concept type で絞り込み\n"
+        "  juice catalog --tag weather      # tag で絞り込み"
+    ),
     "workflow-build": (
         "例:\n  juice workflow build live-bots    # deploy/<name>/docker-compose.yml（常駐）を生成"
     ),
@@ -122,6 +128,19 @@ def _cmd_registry_index(juice: Juice, out: str) -> int:
     return 0
 
 
+def _cmd_catalog(juice: Juice, type_filter: str | None, tag: str | None) -> int:
+    """資産を標準スキーマで横断一覧する（type / tag で絞り込み）。"""
+    entries = juice.catalog(type_=type_filter, tag=tag)
+    if not entries:
+        print("(no assets)", file=sys.stderr)
+        return 0
+    for e in entries:
+        tags = f" [{', '.join(e['tags'])}]" if e.get("tags") else ""
+        desc = f"  — {e['description']}" if e.get("description") else ""
+        print(f"{e['layer']}/{e['name']}  ({e.get('type', '-')}){tags}{desc}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="juice",
@@ -176,6 +195,14 @@ def build_parser() -> argparse.ArgumentParser:
     rip.add_argument(
         "-o", "--out", default="juice.index.yml", help="出力先（既定: juice.index.yml）"
     )
+
+    cap = layer_subs.add_parser(
+        "catalog",
+        help="資産のメタデータを横断一覧する（type / tag で絞り込み）",
+        **_raw(epilog=_EXAMPLES["catalog"]),
+    )
+    cap.add_argument("--type", dest="type_filter", default=None, help="concept type で絞り込む")
+    cap.add_argument("--tag", default=None, help="tag で絞り込む")
 
     for verb, help_text in (
         ("apply", "juice.yaml の desired state を registries へ冪等反映する"),
@@ -511,6 +538,9 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_registry_verify(Juice(), args.index)
         if args.action == "index":
             return _cmd_registry_index(Juice(), args.out)
+
+    if args.layer == "catalog":
+        return _cmd_catalog(Juice(), args.type_filter, args.tag)
 
     if args.action == "list":
         juice = Juice()

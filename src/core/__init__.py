@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from . import bundle as _bundle
 from .apply import apply_manifest
+from .catalog import build_catalog, filter_catalog
 from .config import ALL_ORDER, LAYERS, Config
 from .deploy import (
     build_deployment,
@@ -73,6 +74,8 @@ __all__ = [
     "build_index",
     "write_index",
     "index_status",
+    "build_catalog",
+    "filter_catalog",
     "build_deployment",
     "build_schedule_deployment",
     "dependency_closure",
@@ -130,6 +133,10 @@ class Juice:
     def index_status(self, path: str = "juice.index.yml") -> dict:
         """registry の現状とインデックスファイルの drift 状態を返す。"""
         return index_status(self.registries, path)
+
+    def catalog(self, *, type_: str | None = None, tag: str | None = None) -> list[dict]:
+        """資産を標準スキーマで横断一覧する（type / tag で絞り込み可）。"""
+        return filter_catalog(build_catalog(self.registries), type_=type_, tag=tag)
 
     def apply(
         self,

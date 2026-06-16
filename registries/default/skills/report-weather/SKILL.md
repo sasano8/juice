@@ -3,6 +3,7 @@ kind: skill
 name: report-weather
 type: skill
 description: 指定された都市の天気を取得し、一言で要約して伝える
+tags: [weather, report]
 ---
 
 # report-weather
