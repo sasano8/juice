@@ -79,6 +79,49 @@ def test_workflow_build_vendored_passthrough(tmp_path, capsys) -> None:
     assert "build targets (bundle): (none)" in printed  # 依存物なし＝終端
 
 
+def test_parser_workflow_apply_detach_default_on() -> None:
+    args = build_parser().parse_args(["workflow", "apply", "langfuse"])
+    assert args.action == "apply"
+    assert args.detach is True  # 既定で -d（背景起動）
+    args = build_parser().parse_args(["workflow", "apply", "langfuse", "--no-detach"])
+    assert args.detach is False
+
+
+def test_workflow_apply_vendored_runs_compose_up(tmp_path, monkeypatch, capsys) -> None:
+    # vendored の langfuse を build（passthrough）してから docker compose up -d を実行する。
+    calls: list[str] = []
+    monkeypatch.setattr("src.cli.backends.base.run", lambda cmd: calls.append(cmd) or 0)
+    out = tmp_path / "deploy"
+    rc = main(["workflow", "apply", "langfuse", "-o", str(out)])
+    assert rc == 0
+    assert (out / "langfuse" / "docker-compose.yml").exists()  # build が走った
+    assert calls == [f"docker compose -f {out}/langfuse/docker-compose.yml up -d"]
+
+
+def test_workflow_apply_no_detach_omits_d(tmp_path, monkeypatch) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr("src.cli.backends.base.run", lambda cmd: calls.append(cmd) or 0)
+    out = tmp_path / "deploy"
+    rc = main(["workflow", "apply", "langfuse", "-o", str(out), "--no-detach"])
+    assert rc == 0
+    assert calls == [f"docker compose -f {out}/langfuse/docker-compose.yml up"]
+
+
+def test_workflow_apply_k8s_runs_kubectl_apply(tmp_path, monkeypatch) -> None:
+    # 非 vendored の workflow を --target k8s で build → kubectl apply（k8s backend）。
+    calls: list[str] = []
+    monkeypatch.setattr("src.cli.backends.base.run", lambda cmd: calls.append(cmd) or 0)
+    juice_yaml = tmp_path / "juice.yaml"
+    juice_yaml.write_text(_WF_MANIFEST, encoding="utf-8")
+    out = tmp_path / "deploy"
+    rc = main(
+        ["workflow", "apply", "live-bots", "-f", str(juice_yaml), "-o", str(out), "--target", "k8s"]
+    )
+    assert rc == 0
+    assert (out / "live-bots" / "manifests.yaml").exists()
+    assert calls == [f"kubectl apply -f {out}/live-bots/manifests.yaml"]
+
+
 def test_main_tool_list(capsys: pytest.CaptureFixture[str]) -> None:
     rc = main(["tool", "list"])
     assert rc == 0

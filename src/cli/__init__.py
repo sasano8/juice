@@ -18,13 +18,11 @@ from ..core import (
     Juice,
     LockError,
     ManifestError,
-    is_vendored_workflow,
     load_manifest,
-    write_deployment,
     write_lock,
-    write_schedule_deployment,
-    write_vendored_workflow,
 )
+from . import backends, deploy
+from ._errors import fail, fail_manifest
 
 # 宣言ライフサイクル（juice.yaml）の典型フロー。トップレベル -h の epilog に出す。
 _WORKFLOW_EPILOG = """\
@@ -62,6 +60,12 @@ _EXAMPLES: dict[str, str] = {
     ),
     "workflow-build": (
         "例:\n  juice workflow build live-bots    # deploy/<name>/docker-compose.yml（常駐）を生成"
+    ),
+    "workflow-apply": (
+        "例:\n"
+        "  juice workflow apply langfuse                # build して docker compose up -d\n"
+        "  juice workflow apply langfuse --no-detach    # フォアグラウンドで起動する\n"
+        "  juice workflow apply live-bots --target k8s  # build して kubectl apply"
     ),
     "schedule-build": ("例:\n  juice schedule build morning-brief --target k8s   # CronJob を生成"),
 }
@@ -258,6 +262,35 @@ def build_parser() -> argparse.ArgumentParser:
                 action="store_true",
                 help="依存閉包の bundle を bundle→build まで起動する（docker。既定 off）",
             )
+        if layer == "workflow":
+            apl = action_subs.add_parser(
+                "apply",
+                help="workflow を build して docker compose で実起動する（up -d）",
+                **_raw(epilog=_EXAMPLES["workflow-apply"]),
+            )
+            apl.add_argument("name", help="workflow 名")
+            apl.add_argument(
+                "-f", "--file", default="juice.yaml", help="manifest のパス（既定: juice.yaml）"
+            )
+            apl.add_argument(
+                "-o", "--out", default="deploy", help="出力ルート（既定: deploy/<name>/）"
+            )
+            apl.add_argument(
+                "--target",
+                default="compose",
+                help="実行基盤 target（既定: compose。compose=up / k8s=kubectl apply）",
+            )
+            apl.add_argument(
+                "--no-detach",
+                dest="detach",
+                action="store_false",
+                help="フォアグラウンドで起動する（既定は -d で背景起動）",
+            )
+            apl.add_argument(
+                "--build-deps",
+                action="store_true",
+                help="up の前に依存閉包の bundle を bundle→build まで起動する（docker。既定 off）",
+            )
         if layer == "bundle":
             ip = action_subs.add_parser(
                 "init", help="bundle.yml の雛形を生成して成果物を初期化する"
@@ -340,21 +373,9 @@ def _cmd_bundle(name: str, namespace: str | None) -> int:
     return 0
 
 
-def _exec(command: str) -> int:
-    """コマンドを stderr にエコーして実行する（stdout は server I/O 用にクリーンに保つ）。"""
-    import subprocess
-
-    print(f"$ {command}", file=sys.stderr)
-    try:
-        return subprocess.call(command.split())
-    except FileNotFoundError:
-        print("docker not found (install docker to build/run)", file=sys.stderr)
-        return 127
-
-
 def _cmd_build(name: str, namespace: str | None, tag: str | None) -> int:
     """docker でイメージを実際にビルドする。"""
-    return _exec(Juice(namespace=namespace).build(name, image=tag)["command"])
+    return backends.run(Juice(namespace=namespace).build(name, image=tag)["command"])
 
 
 def _cmd_run(
@@ -381,32 +402,10 @@ def _cmd_run(
         result = juice.bundle(name)
         print(f"(bundle) regenerated {len(result.get('generated', []))} files", file=sys.stderr)
     if build or bundle:  # bundle 後はイメージ再ビルドが必要
-        rc = _exec(juice.build(name, image=tag)["command"])
+        rc = backends.run(juice.build(name, image=tag)["command"])
         if rc != 0:
             return rc
-    return _exec(juice.run(name, mode=mode, image=tag, env_file=env_file)["command"])
-
-
-def _fail(msg: str) -> int:
-    """エラーを stderr に出して exit code 1 を返す（CLI 失敗の共通経路）。"""
-    print(msg, file=sys.stderr)
-    return 1
-
-
-def _hint(message: str) -> str:
-    """よくある失敗に「次の一手」のヒントを添える（無ければ空）。"""
-    if "見つかりません" in message:
-        return "\n  ヒント: パスを確認してください（-f でファイルを指定）。"
-    if "apiVersion" in message:
-        return "\n  ヒント: 対応する apiVersion は juice/v1 です。"
-    if "YAML として解釈できません" in message:
-        return "\n  ヒント: インデントや記号など YAML 構文を確認してください。"
-    return ""
-
-
-def _fail_manifest(file: str, e: ManifestError) -> int:
-    """manifest エラーをファイルパス＋ヒント付きで報告する。"""
-    return _fail(f"invalid manifest ({file}): {e}{_hint(str(e))}")
+    return backends.run(juice.run(name, mode=mode, image=tag, env_file=env_file)["command"])
 
 
 def _cmd_manifest_validate(file: str) -> int:
@@ -414,7 +413,7 @@ def _cmd_manifest_validate(file: str) -> int:
     try:
         manifest = load_manifest(file)
     except ManifestError as e:
-        return _fail_manifest(file, e)
+        return fail_manifest(file, e)
     print(f"ok: {file} (apiVersion={manifest.api_version}, namespace={manifest.namespace})")
     for layer in ("mcp_servers", "subagents", "skills", "bundles", "instances"):
         names = manifest.names(layer)
@@ -428,81 +427,12 @@ def _cmd_lock(file: str, out: str) -> int:
     try:
         result = write_lock(file, out)
     except ManifestError as e:
-        return _fail_manifest(file, e)
+        return fail_manifest(file, e)
     print(f"locked: {out} ({result['manifestDigest']})")
     for layer in ("mcp_servers", "instances"):
         if result[layer]:
             print(f"  {layer}: {', '.join(result[layer])}")
     return 0
-
-
-def _print_closure(closure: dict) -> None:
-    """依存閉包（宣言 → 遡って解決した build 対象）を表示する。"""
-    targets = closure.get("bundle", [])
-    print(f"  build targets (bundle): {', '.join(targets) or '(none)'}")
-    layers = ("subagent", "skill", "tool")
-    deps = [f"{k}: {', '.join(closure[k])}" for k in layers if closure.get(k)]
-    if deps:
-        print(f"    ← deps  {'; '.join(deps)}")
-
-
-def _build_deps(closure: dict) -> int:
-    """依存閉包の bundle を宣言順に bundle→build まで起動する（docker）。rc を集約。"""
-    juice = Juice()
-    rc = 0
-    for name in closure.get("bundle", []):
-        gen = juice.bundle(name)
-        print(f"(bundle) {name}: {len(gen.get('generated', []))} files", file=sys.stderr)
-        r = _exec(juice.build(name)["command"])
-        if r != 0:
-            rc = r
-    return rc
-
-
-def _cmd_workflow_build(name: str, file: str, out: str, target: str, build_deps: bool) -> int:
-    """workflow からデプロイ成果物（docker-compose.yml 等）を生成する（不正なら 1）。
-
-    registry に同梱 compose を持つ **vendored workflow**（終端・外部スタック）はそれを
-    そのまま passthrough し、manifest は読まない。それ以外は manifest の steps から生成する。
-    """
-    juice = Juice()
-    if is_vendored_workflow(juice.registries, name):
-        if target != "compose":
-            return _fail(f"vendored workflow '{name}' は compose のみ（--target {target} は不可）")
-        result = write_vendored_workflow(juice.registries, name, out_dir=out)
-        print(f"deployed (vendored): {result['out']} ({result['services']} services, 終端)")
-        _print_closure(result["closure"])  # 依存物なし → (none)
-        return 0
-    try:
-        manifest = load_manifest(file)
-    except ManifestError as e:
-        return _fail_manifest(file, e)
-    try:
-        result = write_deployment(manifest, name, out_dir=out, target=target)
-    except KeyError:
-        return _fail(f"workflow が見つかりません: {name}（{file} に workflows で宣言してください）")
-    except ValueError as e:  # 未対応 target
-        return _fail(str(e))
-    print(f"deployed: {result['out']} (target={result['target']}, {result['services']} services)")
-    _print_closure(result["closure"])
-    return _build_deps(result["closure"]) if build_deps else 0
-
-
-def _cmd_schedule_build(name: str, file: str, out: str, target: str, build_deps: bool) -> int:
-    """schedule からデプロイ成果物（CronJob 等）を生成する（不正なら 1）。"""
-    try:
-        manifest = load_manifest(file)
-    except ManifestError as e:
-        return _fail_manifest(file, e)
-    try:
-        result = write_schedule_deployment(manifest, name, out_dir=out, target=target)
-    except KeyError:
-        return _fail(f"schedule が見つかりません: {name}（{file} に schedules で宣言してください）")
-    except ValueError as e:  # 未対応 target
-        return _fail(str(e))
-    print(f"deployed: {result['out']} (target={result['target']}, {result['services']} services)")
-    _print_closure(result["closure"])
-    return _build_deps(result["closure"]) if build_deps else 0
 
 
 def _cmd_apply(args) -> int:
@@ -518,9 +448,9 @@ def _cmd_apply(args) -> int:
             require_lock=args.require_lock,
         )
     except ManifestError as e:
-        return _fail_manifest(args.file, e)
+        return fail_manifest(args.file, e)
     except LockError as e:
-        return _fail(f"lock error: {e}")
+        return fail(f"lock error: {e}")
     tag = "(plan) " if dry_run else ""
     print(
         f"{tag}namespace={result['namespace']}: "
@@ -568,11 +498,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.action == "bundle":
         return _cmd_bundle(args.name, args.namespace)
 
+    if args.layer == "workflow" and args.action == "apply":
+        return deploy.workflow_apply(
+            args.name, args.file, args.out, args.target, args.detach, args.build_deps
+        )
+
     if args.layer == "workflow" and args.action == "build":
-        return _cmd_workflow_build(args.name, args.file, args.out, args.target, args.build_deps)
+        return deploy.workflow_build(args.name, args.file, args.out, args.target, args.build_deps)
 
     if args.layer == "schedule" and args.action == "build":
-        return _cmd_schedule_build(args.name, args.file, args.out, args.target, args.build_deps)
+        return deploy.schedule_build(args.name, args.file, args.out, args.target, args.build_deps)
 
     if args.action == "build":
         return _cmd_build(args.name, args.namespace, args.tag)
