@@ -27,8 +27,8 @@ type: mcp-server
 _PLAIN_YAML = """\
 # bundle.yml — 純 YAML（frontmatter ではない）
 apiVersion: juice/v1
-kind: mcp_bundled
-name: weather-bot
+kind: bundle
+name: mcp_weather-bot
 """
 
 
@@ -40,7 +40,7 @@ def test_parse_metadata_frontmatter() -> None:
 
 def test_parse_metadata_plain_yaml() -> None:
     md = parse_metadata(_PLAIN_YAML)
-    assert md["name"] == "weather-bot"
+    assert md["name"] == "mcp_weather-bot"
 
 
 def test_parse_metadata_no_frontmatter_returns_empty() -> None:
@@ -92,7 +92,7 @@ def test_verify_names_detects_missing(bucket: str) -> None:
 def test_okf_md_layers_are_md_backed() -> None:
     # OKF 対象は .md concept document のレイヤのみ（純 YAML マニフェストは対象外）。
     assert set(OKF_MD_LAYERS) == {"tool", "skill", "subagent", "workflow", "schedule"}
-    assert "mcp_bundled" not in OKF_MD_LAYERS
+    assert "bundle" not in OKF_MD_LAYERS
     assert "instance" not in OKF_MD_LAYERS
 
 
@@ -121,6 +121,6 @@ def test_verify_okf_empty_type_is_non_conformant(bucket: str) -> None:
 
 
 def test_verify_okf_ignores_yaml_manifests(bucket: str) -> None:
-    # mcp_bundled の bundle.yml は type を持たないが OKF 対象外なので報告されない。
+    # bundle の bundle.yml は type を持たないが OKF 対象外なので報告されない。
     issues = verify_okf(create_registries(bucket=bucket, namespace="default"))
-    assert all(i.layer != "mcp_bundled" for i in issues)
+    assert all(i.layer != "bundle" for i in issues)

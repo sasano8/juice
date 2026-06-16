@@ -24,22 +24,22 @@ from src.core.manifest import parse_manifest
 
 MANIFEST = """\
 apiVersion: juice/v1
-mcp_bundled:
-  - name: weather-bot
+bundles:
+  - name: mcp_weather-bot
     version: 0.0.1
   - name: news-bot
 workflows:
   - name: live-bots
     steps:
-      - mcp_bundled: weather-bot
+      - bundle: mcp_weather-bot
         input:
           city: "Tokyo"
-      - mcp_bundled: news-bot
+      - bundle: news-bot
 schedules:
   - name: morning-brief
     schedule: "0 7 * * *"
     steps:
-      - mcp_bundled: weather-bot
+      - bundle: mcp_weather-bot
         input:
           city: "Tokyo"
 """
@@ -56,8 +56,8 @@ def test_build_compose_structure():
     m = _manifest()
     compose = build_compose(m, find_workflow(m, "live-bots"))
     assert compose["name"] == "live-bots"
-    svc = compose["services"]["weather-bot"]
-    assert svc["image"] == "juice/weather-bot:0.0.1"  # version があれば tag
+    svc = compose["services"]["mcp_weather-bot"]
+    assert svc["image"] == "juice/mcp_weather-bot:0.0.1"  # version があれば tag
     assert svc["restart"] == "unless-stopped"  # 常駐
     assert svc["environment"] == {"city": "Tokyo"}  # input は環境変数
     assert svc["labels"] == {"juice.workflow": "live-bots"}
@@ -76,7 +76,7 @@ def test_build_deployment_compose_filename_and_header():
     assert filename == "docker-compose.yml"
     assert text.startswith("# 生成物")
     data = yaml.safe_load(text)
-    assert set(data["services"]) == {"weather-bot", "news-bot"}
+    assert set(data["services"]) == {"mcp_weather-bot", "news-bot"}
 
 
 def test_build_deployment_is_deterministic():
@@ -111,9 +111,9 @@ def test_write_deployment_path_and_idempotent(tmp_path: Path):
 def test_duplicate_bundle_steps_get_unique_service_names():
     m = parse_manifest(
         "apiVersion: juice/v1\n"
-        "mcp_bundled:\n  - name: bot\n"
+        "bundles:\n  - name: bot\n"
         "workflows:\n  - name: w\n    steps:\n"
-        "      - mcp_bundled: bot\n      - mcp_bundled: bot\n"
+        "      - bundle: bot\n      - bundle: bot\n"
     )
     compose = build_compose(m, find_workflow(m, "w"))
     assert set(compose["services"]) == {"bot", "bot-2"}
@@ -126,7 +126,7 @@ def test_workflow_k8s_is_deployment():
     dep = docs[0]
     assert dep["apiVersion"] == "apps/v1"
     assert dep["spec"]["replicas"] == 1
-    assert dep["metadata"]["name"] == "live-bots-weather-bot"
+    assert dep["metadata"]["name"] == "live-bots-mcp_weather-bot"
 
 
 # --- schedule（定期実行のトリガ） -----------------------------------------------
@@ -138,17 +138,17 @@ def test_schedule_k8s_is_cronjob():
     assert {d["kind"] for d in docs} == {"CronJob"}
     cj = docs[0]
     assert cj["apiVersion"] == "batch/v1"
-    assert cj["metadata"]["name"] == "morning-brief-weather-bot"
+    assert cj["metadata"]["name"] == "morning-brief-mcp_weather-bot"
     assert cj["spec"]["schedule"] == "0 7 * * *"
     container = cj["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]
-    assert container["image"] == "juice/weather-bot:0.0.1"
+    assert container["image"] == "juice/mcp_weather-bot:0.0.1"
     assert container["env"] == [{"name": "city", "value": "Tokyo"}]
 
 
 def test_schedule_compose_is_oneshot():
     m = _manifest()
     compose = build_schedule_compose(m, find_schedule(m, "morning-brief"))
-    svc = compose["services"]["weather-bot"]
+    svc = compose["services"]["mcp_weather-bot"]
     assert svc["restart"] == "no"  # cron が無いので自動起動しない
     assert svc["profiles"] == ["scheduled"]
     assert svc["labels"]["juice.schedule"] == "0 7 * * *"
@@ -188,8 +188,8 @@ subagents:
     allow_tools: [weather]
 skills:
   - name: report-weather
-mcp_bundled:
-  - name: weather-bot
+bundles:
+  - name: mcp_weather-bot
     subagent: forecaster
     skills: [report-weather]
     tools:
@@ -199,15 +199,15 @@ schedules:
   - name: morning-brief
     schedule: "0 7 * * *"
     steps:
-      - mcp_bundled: weather-bot
+      - bundle: mcp_weather-bot
 """
 
 
 def test_dependency_closure_traces_deps():
     m = parse_manifest(_RICH)
     closure = dependency_closure(m, find_schedule(m, "morning-brief").steps)
-    # 宣言（schedule）→ mcp_bundled → subagent / skill / tool を遡って解決する。
-    assert closure["mcp_bundled"] == ["weather-bot"]  # build 対象
+    # 宣言（schedule）→ bundle → subagent / skill / tool を遡って解決する。
+    assert closure["bundle"] == ["mcp_weather-bot"]  # build 対象
     assert closure["subagent"] == ["forecaster"]
     assert closure["skill"] == ["report-weather"]
     assert closure["tool"] == ["weather"]
@@ -216,4 +216,4 @@ def test_dependency_closure_traces_deps():
 def test_write_deployment_includes_closure(tmp_path):
     m = parse_manifest(_RICH)
     r = write_schedule_deployment(m, "morning-brief", out_dir=str(tmp_path), target="k8s")
-    assert r["closure"]["mcp_bundled"] == ["weather-bot"]
+    assert r["closure"]["bundle"] == ["mcp_weather-bot"]

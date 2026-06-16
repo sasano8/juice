@@ -3,7 +3,7 @@
 各レイヤのエントリファイル（[config.py](config.py) の `ENTRY_FILES`）からメタデータを取り出す。
 2 形式を扱う:
 - **md frontmatter**（tool / subagent / skill / workflow）… 先頭 `---` で囲んだ YAML ブロック。
-- **純 YAML**（mcp_bundled の bundle.yml / instance の index.yml）… ファイル全体が YAML。
+- **純 YAML**（bundle の bundle.yml / instance の index.yml）… ファイル全体が YAML。
 
 E004 の核となる検証を 2 つ提供する:
 - **name 検証**（`verify_names`）… メタデータの `name` がディレクトリ名に一致するか。
@@ -24,7 +24,7 @@ from .registry import RegistryArray
 # OKF（Open Knowledge Format, Google Cloud v0.1）は **.md の concept document** に非空の
 # `type` フィールドを必須とする（推奨フィールド title/description/resource/tags/timestamp は任意）。
 # juice では .md をエントリにするレイヤ（tool / skill / subagent / workflow）が OKF の対象。
-# mcp_bundled / instance は純 YAML の juice マニフェスト（apiVersion/kind ＝ k8s 流儀）で、
+# bundle / instance は純 YAML の juice マニフェスト（apiVersion/kind ＝ k8s 流儀）で、
 # OKF の .md concept document ではないため対象外。
 OKF_MD_LAYERS: list[str] = [layer for layer, f in ENTRY_FILES.items() if f.endswith(".md")]
 
@@ -115,7 +115,7 @@ def verify_okf(registries: RegistryArray) -> list[OkfIssue]:
 
     OKF v0.1 の適合規則「非予約 .md は非空の `type` を持つ」を確認する。欠落を列挙して返す。
     自動修正はしない（[verify_names] と同方針＝人間に委ねる）。純 YAML マニフェスト
-    （mcp_bundled / instance）は OKF の .md concept document ではないため検査対象外。
+    （bundle / instance）は OKF の .md concept document ではないため検査対象外。
     """
     issues: list[OkfIssue] = []
     for layer in OKF_MD_LAYERS:

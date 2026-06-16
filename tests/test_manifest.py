@@ -30,8 +30,8 @@ skills:
   - name: report-weather
     description: 都市の天気を取得し一言で要約する
 
-mcp_bundled:
-  - name: weather-bot
+bundles:
+  - name: mcp_weather-bot
     subagent: forecaster
     skills: [report-weather]
     tools:
@@ -41,7 +41,7 @@ mcp_bundled:
 
 instances:
   - name: tokyo-weather-bot
-    mcp_bundled: weather-bot
+    bundle: mcp_weather-bot
     defaults:
       city: "Tokyo"
     secrets:
@@ -65,7 +65,7 @@ def test_parse_valid_full_manifest():
     assert sa.allow_tools == ["weather"]
     assert sa.prompt.strip().startswith("あなたは")
 
-    bundle = m.mcp_bundled[0]
+    bundle = m.bundles[0]
     assert bundle.subagent == "forecaster"
     assert bundle.skills == ["report-weather"]
     assert len(bundle.tools) == 1
@@ -76,7 +76,7 @@ def test_parse_valid_full_manifest():
     assert binding.env == ["WEATHER_API_KEY"]
 
     inst = m.instances[0]
-    assert inst.mcp_bundled == "weather-bot"
+    assert inst.bundle == "mcp_weather-bot"
     assert inst.defaults == {"city": "Tokyo"}
     assert inst.secrets == {"WEATHER_API_KEY": "env:WEATHER_API_KEY"}
 
@@ -142,7 +142,7 @@ subagents:
 def test_bundled_unknown_subagent_reference():
     text = """\
 apiVersion: juice/v1
-mcp_bundled:
+bundles:
   - name: bot
     subagent: ghost
 """
@@ -153,7 +153,7 @@ mcp_bundled:
 def test_bundled_unknown_skill_reference():
     text = """\
 apiVersion: juice/v1
-mcp_bundled:
+bundles:
   - name: bot
     skills: [ghost]
 """
@@ -164,7 +164,7 @@ mcp_bundled:
 def test_bundled_tool_unknown_server_reference():
     text = """\
 apiVersion: juice/v1
-mcp_bundled:
+bundles:
   - name: bot
     tools:
       - bind: w
@@ -177,7 +177,7 @@ mcp_bundled:
 def test_tool_binding_requires_bind():
     text = """\
 apiVersion: juice/v1
-mcp_bundled:
+bundles:
   - name: bot
     tools:
       - from: mcp_server:weather
@@ -189,7 +189,7 @@ mcp_bundled:
 def test_tool_binding_from_format():
     text = """\
 apiVersion: juice/v1
-mcp_bundled:
+bundles:
   - name: bot
     tools:
       - bind: w
@@ -202,7 +202,7 @@ mcp_bundled:
 def test_tool_binding_unsupported_kind():
     text = """\
 apiVersion: juice/v1
-mcp_bundled:
+bundles:
   - name: bot
     tools:
       - bind: w
@@ -212,13 +212,13 @@ mcp_bundled:
         parse_manifest(text)
 
 
-def test_instance_requires_mcp_bundled():
+def test_instance_requires_bundle():
     text = """\
 apiVersion: juice/v1
 instances:
   - name: inst
 """
-    with pytest.raises(ManifestError, match="mcp_bundled（文字列）が必要"):
+    with pytest.raises(ManifestError, match="bundle（文字列）が必要"):
         parse_manifest(text)
 
 
@@ -227,9 +227,9 @@ def test_instance_unknown_bundled_reference():
 apiVersion: juice/v1
 instances:
   - name: inst
-    mcp_bundled: ghost
+    bundle: ghost
 """
-    with pytest.raises(ManifestError, match="未定義の mcp_bundled"):
+    with pytest.raises(ManifestError, match="未定義の bundle"):
         parse_manifest(text)
 
 
@@ -265,7 +265,7 @@ def _bundle_with_from(from_ref: str, server_version: str | None = None) -> str:
 apiVersion: juice/v1
 mcp_servers:
   - name: weather{ver}
-mcp_bundled:
+bundles:
   - name: bot
     tools:
       - bind: w
@@ -275,14 +275,14 @@ mcp_bundled:
 
 def test_constraint_satisfied():
     m = parse_manifest(_bundle_with_from("mcp_server:weather@>=1.0.0", "1.2.0"))
-    binding = m.mcp_bundled[0].tools[0]
+    binding = m.bundles[0].tools[0]
     assert binding.from_name == "weather"
     assert binding.constraint == ">=1.0.0"
 
 
 def test_constraint_without_at_is_backward_compatible():
     m = parse_manifest(_bundle_with_from("mcp_server:weather"))
-    binding = m.mcp_bundled[0].tools[0]
+    binding = m.bundles[0].tools[0]
     assert binding.from_name == "weather"
     assert binding.constraint is None
 
@@ -329,8 +329,8 @@ mcp_servers:
 subagents:
   - name: forecaster
     allow_tools: [weather]
-mcp_bundled:
-  - name: weather-bot
+bundles:
+  - name: mcp_weather-bot
     subagent: forecaster
     tools:
       - bind: weather
@@ -338,14 +338,14 @@ mcp_bundled:
 workflows:
   - name: weather-service
     steps:
-      - mcp_bundled: weather-bot
+      - bundle: mcp_weather-bot
         input:
           city: "Tokyo"
 schedules:
   - name: morning-brief
     schedule: "0 7 * * *"
     steps:
-      - mcp_bundled: weather-bot
+      - bundle: mcp_weather-bot
         input:
           city: "Tokyo"
 """
@@ -357,7 +357,7 @@ def test_parse_workflow():
     wf = m.workflows[0]
     assert not hasattr(wf, "schedule")  # schedule は workflow の持ち物ではない（別概念へ分離）
     assert len(wf.steps) == 1
-    assert wf.steps[0].mcp_bundled == "weather-bot"
+    assert wf.steps[0].bundle == "mcp_weather-bot"
     assert wf.steps[0].input == {"city": "Tokyo"}
 
 
@@ -366,14 +366,14 @@ def test_parse_schedule():
     assert m.names("schedules") == ["morning-brief"]
     sch = m.schedules[0]
     assert sch.schedule == "0 7 * * *"
-    assert sch.steps[0].mcp_bundled == "weather-bot"
+    assert sch.steps[0].bundle == "mcp_weather-bot"
     assert sch.steps[0].input == {"city": "Tokyo"}
 
 
 def test_schedule_requires_cron():
     text = (
-        "apiVersion: juice/v1\nmcp_bundled:\n  - name: weather-bot\n"
-        "schedules:\n  - name: s\n    steps:\n      - mcp_bundled: weather-bot\n"
+        "apiVersion: juice/v1\nbundles:\n  - name: mcp_weather-bot\n"
+        "schedules:\n  - name: s\n    steps:\n      - bundle: mcp_weather-bot\n"
     )
     with pytest.raises(ManifestError, match="schedule（cron 文字列）が必要"):
         parse_manifest(text)
@@ -382,29 +382,29 @@ def test_schedule_requires_cron():
 def test_schedule_unknown_bundle_reference():
     text = (
         "apiVersion: juice/v1\nschedules:\n  - name: s\n    schedule: '0 7 * * *'\n"
-        "    steps:\n      - mcp_bundled: ghost\n"
+        "    steps:\n      - bundle: ghost\n"
     )
-    with pytest.raises(ManifestError, match="未定義の mcp_bundled"):
+    with pytest.raises(ManifestError, match="未定義の bundle"):
         parse_manifest(text)
 
 
-def test_workflow_step_requires_mcp_bundled():
+def test_workflow_step_requires_bundle():
     text = "apiVersion: juice/v1\nworkflows:\n  - name: w\n    steps:\n      - input: {a: 1}\n"
-    with pytest.raises(ManifestError, match="mcp_bundled（文字列）が必要"):
+    with pytest.raises(ManifestError, match="bundle（文字列）が必要"):
         parse_manifest(text)
 
 
 def test_workflow_unknown_bundle_reference():
-    text = "apiVersion: juice/v1\nworkflows:\n  - name: w\n    steps:\n      - mcp_bundled: ghost\n"
-    with pytest.raises(ManifestError, match="未定義の mcp_bundled"):
+    text = "apiVersion: juice/v1\nworkflows:\n  - name: w\n    steps:\n      - bundle: ghost\n"
+    with pytest.raises(ManifestError, match="未定義の bundle"):
         parse_manifest(text)
 
 
 def test_workflow_step_input_must_be_mapping():
     text = (
-        "apiVersion: juice/v1\nmcp_bundled:\n  - name: weather-bot\n"
+        "apiVersion: juice/v1\nbundles:\n  - name: mcp_weather-bot\n"
         "workflows:\n  - name: w\n    steps:\n"
-        "      - mcp_bundled: weather-bot\n        input: not-a-map\n"
+        "      - bundle: mcp_weather-bot\n        input: not-a-map\n"
     )
     with pytest.raises(ManifestError, match="input はマッピング"):
         parse_manifest(text)

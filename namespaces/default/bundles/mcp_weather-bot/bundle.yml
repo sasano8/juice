@@ -1,11 +1,11 @@
-# bundle.yml — mcp_bundled の定義 + ビルド宣言
+# bundle.yml — bundle の定義 + ビルド宣言
 apiVersion: juice/v1
-kind: mcp_bundled
-name: weather-bot
+kind: bundle
+name: mcp_weather-bot
 namespace: default
 
 # build で生成する docker イメージ名（タグなし）と version
-image: juice/weather-bot
+image: juice/mcp_weather-bot
 version: 0.0.1
 
 # 会話に使う LLM。API キーは環境変数 or ファイルで注入（値は書かない）

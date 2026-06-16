@@ -1,14 +1,14 @@
 """juice apply: 宣言（juice.yaml）を registries/ へ冪等反映する（C003）。
 
 `juice.yaml`（[Manifest](manifest.py)）の desired state を、依存順（mcp_server → skill / subagent →
-mcp_bundled → instance）に下層から registry レイアウトへ materialize（reconcile）する。
+bundle → instance）に下層から registry レイアウトへ materialize（reconcile）する。
 宣言にない既存パッケージは prune し、何度実行しても同じ状態へ収束する（冪等）。
 
 材料化（materialize）先は現行の registry エントリ形式（docs/build.md「registry レイアウト」）:
 - mcp_server → `tools/<name>/index.md`（frontmatter: kind/name/type/command/args/env）
 - subagent   → `subagents/<name>/index.md`（frontmatter＋本文 = prompt）
 - skill      → `skills/<name>/SKILL.md`
-- mcp_bundled→ `bundles/<name>/bundle.yml`
+- bundle     → `bundles/<name>/bundle.yml`
 - instance   → `instances/<name>/index.yml`
 - workflow   → `workflows/<name>/index.md`（frontmatter: kind/name/type/steps）
 - schedule   → `schedules/<name>/index.md`（frontmatter: kind/name/type/schedule/steps）
@@ -26,9 +26,9 @@ import yaml
 
 from .config import ENTRY_FILES
 from .manifest import (
+    BundleSpec,
     InstanceSpec,
     Manifest,
-    McpBundledSpec,
     McpServerSpec,
     ScheduleSpec,
     SkillSpec,
@@ -38,12 +38,12 @@ from .manifest import (
 from .registry import RegistryArray
 
 # (manifest 属性, registry レイヤ) を依存順（下層 → 上層）に並べる。
-# workflow / schedule は mcp_bundled を参照する最上位なので末尾に置く。
+# workflow / schedule は bundle を参照する最上位なので末尾に置く。
 _LAYER_ORDER: list[tuple[str, str]] = [
     ("mcp_servers", "tool"),
     ("skills", "skill"),
     ("subagents", "subagent"),
-    ("mcp_bundled", "mcp_bundled"),
+    ("bundles", "bundle"),
     ("instances", "instance"),
     ("workflows", "workflow"),
     ("schedules", "schedule"),
@@ -96,7 +96,7 @@ def _materialize(layer: str, item, ns: str) -> str:
         return _subagent(item)
     if layer == "skill":
         return _skill(item)
-    if layer == "mcp_bundled":
+    if layer == "bundle":
         return _bundle(item, ns)
     if layer == "instance":
         return _instance(item)
@@ -143,10 +143,10 @@ def _skill(s: SkillSpec) -> str:
     return _frontmatter(meta, f"# {s.name}\n")
 
 
-def _bundle(b: McpBundledSpec, ns: str) -> str:
+def _bundle(b: BundleSpec, ns: str) -> str:
     data: dict = {
         "apiVersion": "juice/v1",
-        "kind": "mcp_bundled",
+        "kind": "bundle",
         "name": b.name,
         "namespace": ns,
     }
@@ -169,7 +169,7 @@ def _instance(i: InstanceSpec) -> str:
     data: dict = {
         "kind": "instance",
         "name": i.name,
-        "mcp_bundled": i.mcp_bundled,
+        "bundle": i.bundle,
         "status": "stopped",
     }
     if i.secrets:
@@ -184,8 +184,7 @@ def _workflow(w: WorkflowSpec) -> str:
     # workflow は常駐サービス群の定義（時間非依存）。schedule は別概念（ScheduleSpec）の持ち物。
     meta: dict = {"kind": "workflow", "name": w.name, "type": "workflow"}
     meta["steps"] = [
-        {"mcp_bundled": s.mcp_bundled, **({"input": dict(s.input)} if s.input else {})}
-        for s in w.steps
+        {"bundle": s.bundle, **({"input": dict(s.input)} if s.input else {})} for s in w.steps
     ]
     return _frontmatter(meta, f"# {w.name}\n")
 
@@ -194,8 +193,7 @@ def _schedule(s: ScheduleSpec) -> str:
     # schedule は .md concept doc。`type` は OKF 必須。cron（いつ動かすか）を持つトリガ。
     meta: dict = {"kind": "schedule", "name": s.name, "type": "schedule", "schedule": s.schedule}
     meta["steps"] = [
-        {"mcp_bundled": st.mcp_bundled, **({"input": dict(st.input)} if st.input else {})}
-        for st in s.steps
+        {"bundle": st.bundle, **({"input": dict(st.input)} if st.input else {})} for st in s.steps
     ]
     return _frontmatter(meta, f"# {s.name}\n")
 

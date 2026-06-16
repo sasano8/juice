@@ -6,7 +6,7 @@
 現状の lock が固定するもの:
 - **manifestDigest** … manifest の宣言内容（spec）のハッシュ。spec/lock の drift 検出に使う。
 - **mcp_servers** … 各 server の `package` / `command` / `version` を pin する。
-- **instances** … instance ごとの deployable な依存閉包（mcp_bundled → subagent / skills /
+- **instances** … instance ごとの deployable な依存閉包（bundle → subagent / skills /
   結線された mcp_server）を解決して固定する。
 
 `build_lock` は同じ Manifest から常に同じ Lock を返す。`dump_lock` も決定的に直列化するため、
@@ -53,7 +53,7 @@ class LockedInstance:
     """instance の deployable な依存閉包（解決済み）。"""
 
     name: str
-    mcp_bundled: str
+    bundle: str
     subagent: str | None
     skills: list[str] = field(default_factory=list)
     mcp_servers: list[str] = field(default_factory=list)  # 結線された mcp_server 名
@@ -97,10 +97,10 @@ def build_lock(manifest: Manifest) -> Lock:
         for s in manifest.mcp_servers
     ]
 
-    bundles = {b.name: b for b in manifest.mcp_bundled}
+    bundles = {b.name: b for b in manifest.bundles}
     instances: list[LockedInstance] = []
     for inst in manifest.instances:
-        bundle = bundles.get(inst.mcp_bundled)
+        bundle = bundles.get(inst.bundle)
         # 参照は parse 時に検証済みだが、念のため欠落は空閉包として扱う。
         subagent = bundle.subagent if bundle else None
         skills = list(bundle.skills) if bundle else []
@@ -108,7 +108,7 @@ def build_lock(manifest: Manifest) -> Lock:
         instances.append(
             LockedInstance(
                 name=inst.name,
-                mcp_bundled=inst.mcp_bundled,
+                bundle=inst.bundle,
                 subagent=subagent,
                 skills=skills,
                 mcp_servers=server_names,
@@ -144,7 +144,7 @@ def lock_to_dict(lock: Lock) -> dict:
         "instances": [
             {
                 "name": i.name,
-                "mcp_bundled": i.mcp_bundled,
+                "bundle": i.bundle,
                 "subagent": i.subagent,
                 "skills": i.skills,
                 "mcp_servers": i.mcp_servers,

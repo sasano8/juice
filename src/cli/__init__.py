@@ -1,7 +1,7 @@
 """juice CLI。
 
 例:
-    juice mcp_bundled list
+    juice bundle list
     juice instance list
 各レイヤ配下のディレクトリ（= パッケージ）一覧を表示する。
 """
@@ -34,7 +34,7 @@ _WORKFLOW_EPILOG = """\
 
 パッケージ一覧:
   juice all list                           # 全レイヤを依存順に一覧
-  juice mcp_bundled run weather-bot ui     # サンプルを起動（bundle→build→run）
+  juice bundle run mcp_weather-bot ui      # サンプルを起動（bundle→build→run）
 """
 
 # 各サブコマンドの使用例（サブパーサ -h の epilog）。
@@ -254,13 +254,13 @@ def build_parser() -> argparse.ArgumentParser:
             bp.add_argument(
                 "--build-deps",
                 action="store_true",
-                help="依存閉包の mcp_bundled を bundle→build まで起動する（docker。既定 off）",
+                help="依存閉包の bundle を bundle→build まで起動する（docker。既定 off）",
             )
-        if layer == "mcp_bundled":
+        if layer == "bundle":
             ip = action_subs.add_parser(
                 "init", help="bundle.yml の雛形を生成して成果物を初期化する"
             )
-            ip.add_argument("name", help="成果物名（mcp_bundled）")
+            ip.add_argument("name", help="成果物名（bundle）")
             ip.add_argument("-n", "--namespace", default=None, help="namespace（既定: default）")
             ip.add_argument(
                 "--clean",
@@ -272,11 +272,11 @@ def build_parser() -> argparse.ArgumentParser:
                 "bundle",
                 help="内包物を vendoring し requirements/Dockerfile/entrypoint を生成する",
             )
-            bp.add_argument("name", help="成果物名（mcp_bundled）")
+            bp.add_argument("name", help="成果物名（bundle）")
             bp.add_argument("-n", "--namespace", default=None, help="namespace（既定: default）")
 
             blp = action_subs.add_parser("build", help="docker でイメージをビルドする")
-            blp.add_argument("name", help="成果物名（mcp_bundled）")
+            blp.add_argument("name", help="成果物名（bundle）")
             blp.add_argument("-n", "--namespace", default=None, help="namespace（既定: default）")
             blp.add_argument(
                 "-t",
@@ -288,7 +288,7 @@ def build_parser() -> argparse.ArgumentParser:
             rp = action_subs.add_parser(
                 "run", help="mode に応じてサービスを docker 起動する（api / ui / mcp_server）"
             )
-            rp.add_argument("name", help="成果物名（mcp_bundled）")
+            rp.add_argument("name", help="成果物名（bundle）")
             rp.add_argument(
                 "mode",
                 nargs="?",
@@ -414,7 +414,7 @@ def _cmd_manifest_validate(file: str) -> int:
     except ManifestError as e:
         return _fail_manifest(file, e)
     print(f"ok: {file} (apiVersion={manifest.api_version}, namespace={manifest.namespace})")
-    for layer in ("mcp_servers", "subagents", "skills", "mcp_bundled", "instances"):
+    for layer in ("mcp_servers", "subagents", "skills", "bundles", "instances"):
         names = manifest.names(layer)
         if names:
             print(f"  {layer}: {', '.join(names)}")
@@ -436,8 +436,8 @@ def _cmd_lock(file: str, out: str) -> int:
 
 def _print_closure(closure: dict) -> None:
     """依存閉包（宣言 → 遡って解決した build 対象）を表示する。"""
-    targets = closure.get("mcp_bundled", [])
-    print(f"  build targets (mcp_bundled): {', '.join(targets) or '(none)'}")
+    targets = closure.get("bundle", [])
+    print(f"  build targets (bundle): {', '.join(targets) or '(none)'}")
     layers = ("subagent", "skill", "tool")
     deps = [f"{k}: {', '.join(closure[k])}" for k in layers if closure.get(k)]
     if deps:
@@ -445,10 +445,10 @@ def _print_closure(closure: dict) -> None:
 
 
 def _build_deps(closure: dict) -> int:
-    """依存閉包の mcp_bundled を宣言順に bundle→build まで起動する（docker）。rc を集約。"""
+    """依存閉包の bundle を宣言順に bundle→build まで起動する（docker）。rc を集約。"""
     juice = Juice()
     rc = 0
-    for name in closure.get("mcp_bundled", []):
+    for name in closure.get("bundle", []):
         gen = juice.bundle(name)
         print(f"(bundle) {name}: {len(gen.get('generated', []))} files", file=sys.stderr)
         r = _exec(juice.build(name)["command"])

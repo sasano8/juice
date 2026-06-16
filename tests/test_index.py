@@ -13,10 +13,10 @@ def test_build_index_structure(registries) -> None:
     assert index["indexVersion"] == INDEX_VERSION
     assert index["namespace"] == "default"
     assert index["digest"].startswith("sha256:")
-    # 最小レジストリは tool/subagent/skill/mcp_bundled の 4 つ。
+    # 最小レジストリは tool/subagent/skill/bundle の 4 つ。
     names = {(p["layer"], p["dir"]) for p in index["packages"]}
     assert ("tool", "weather") in names
-    assert ("mcp_bundled", "weather-bot") in names
+    assert ("bundle", "mcp_weather-bot") in names
     weather = next(p for p in index["packages"] if p["dir"] == "weather")
     assert weather["metadata"]["name"] == "weather"
 

@@ -1,7 +1,7 @@
 """宣言的ワークスペース manifest（juice.yaml）のパーサ。
 
 `juice.yaml` は「何を・どう結線するか」を 1 ファイルで宣言する唯一の正
-（source of truth）。全レイヤ（mcp_server / subagent / skill / mcp_bundled / instance / workflow）を
+（source of truth）。全レイヤ（mcp_server / subagent / skill / bundle / instance / workflow）を
 名前参照で結線する（設計は docs/workspace.md を参照）。
 
 このモジュールは manifest を **型付きの構造（Manifest）へパースし、構造と相互参照を検証**する
@@ -65,7 +65,7 @@ class SkillSpec:
 
 @dataclass
 class ToolBinding:
-    """mcp_bundled が mcp_server の tool を結線する 1 本の束縛。"""
+    """bundle が mcp_server の tool を結線する 1 本の束縛。"""
 
     bind: str  # bundle 内での tool 名
     from_kind: str  # 取り込み元の型（現状は "mcp_server"）
@@ -75,7 +75,7 @@ class ToolBinding:
 
 
 @dataclass
-class McpBundledSpec:
+class BundleSpec:
     """集約層：subagent + skill + mcp_server(tool) を結線する。"""
 
     name: str
@@ -87,25 +87,25 @@ class McpBundledSpec:
 
 @dataclass
 class InstanceSpec:
-    """具象：mcp_bundled に変数既定値を与えた deployable な実個体。"""
+    """具象：bundle に変数既定値を与えた deployable な実個体。"""
 
     name: str
-    mcp_bundled: str
+    bundle: str
     defaults: dict = field(default_factory=dict)
     secrets: dict = field(default_factory=dict)
 
 
 @dataclass
 class WorkflowStep:
-    """1 ステップ。指定 mcp_bundled を input 付きで動かす（workflow / schedule で共用）。"""
+    """1 ステップ。指定 bundle を input 付きで動かす（workflow / schedule で共用）。"""
 
-    mcp_bundled: str
+    bundle: str
     input: dict = field(default_factory=dict)
 
 
 @dataclass
 class WorkflowSpec:
-    """協調層：複数 mcp_bundled を**常駐**させる定義（時間非依存）。
+    """協調層：複数 bundle を**常駐**させる定義（時間非依存）。
 
     「何を・どう動かすか」だけを持つ。「いつ定期実行するか」は別概念 [ScheduleSpec] の責務
     （定義とトリガの分離。k8s の Job↔CronJob、Argo の WorkflowTemplate↔CronWorkflow と同型）。
@@ -138,7 +138,7 @@ class Manifest:
     mcp_servers: list[McpServerSpec] = field(default_factory=list)
     subagents: list[SubagentSpec] = field(default_factory=list)
     skills: list[SkillSpec] = field(default_factory=list)
-    mcp_bundled: list[McpBundledSpec] = field(default_factory=list)
+    bundles: list[BundleSpec] = field(default_factory=list)
     instances: list[InstanceSpec] = field(default_factory=list)
     workflows: list[WorkflowSpec] = field(default_factory=list)
     schedules: list[ScheduleSpec] = field(default_factory=list)
@@ -187,7 +187,7 @@ def parse_manifest(text: str) -> Manifest:
         mcp_servers=[_parse_mcp_server(it) for it in _items(raw, "mcp_servers")],
         subagents=[_parse_subagent(it) for it in _items(raw, "subagents")],
         skills=[_parse_skill(it) for it in _items(raw, "skills")],
-        mcp_bundled=[_parse_mcp_bundled(it) for it in _items(raw, "mcp_bundled")],
+        bundles=[_parse_bundle(it) for it in _items(raw, "bundles")],
         instances=[_parse_instance(it) for it in _items(raw, "instances")],
         workflows=[_parse_workflow(it) for it in _items(raw, "workflows")],
         schedules=[_parse_schedule(it) for it in _items(raw, "schedules")],
@@ -239,21 +239,19 @@ def _parse_skill(item: dict) -> SkillSpec:
     )
 
 
-def _parse_mcp_bundled(item: dict) -> McpBundledSpec:
-    name = _require_name(item, "mcp_bundled")
-    return McpBundledSpec(
+def _parse_bundle(item: dict) -> BundleSpec:
+    name = _require_name(item, "bundles")
+    return BundleSpec(
         name=name,
-        subagent=_opt_str(item, "subagent", "mcp_bundled", name),
-        skills=_str_list(item, "skills", "mcp_bundled", name),
-        tools=[
-            _parse_tool_binding(t, name) for t in _sub_items(item, "tools", "mcp_bundled", name)
-        ],
-        version=_opt_version(item, "mcp_bundled", name),
+        subagent=_opt_str(item, "subagent", "bundles", name),
+        skills=_str_list(item, "skills", "bundles", name),
+        tools=[_parse_tool_binding(t, name) for t in _sub_items(item, "tools", "bundles", name)],
+        version=_opt_version(item, "bundles", name),
     )
 
 
 def _parse_tool_binding(item: dict, owner: str) -> ToolBinding:
-    where = f"mcp_bundled '{owner}' の tools[]"
+    where = f"bundle '{owner}' の tools[]"
     if not isinstance(item, dict):
         raise ManifestError(f"{where} の各要素はマッピングである必要があります")
     bind = item.get("bind")
@@ -282,19 +280,19 @@ def _parse_tool_binding(item: dict, owner: str) -> ToolBinding:
         bind=bind,
         from_kind=kind,
         from_name=from_name,
-        env=_str_list(item, "env", "mcp_bundled", f"{owner}.tools.{bind}"),
+        env=_str_list(item, "env", "bundles", f"{owner}.tools.{bind}"),
         constraint=constraint.strip() if sep else None,
     )
 
 
 def _parse_instance(item: dict) -> InstanceSpec:
     name = _require_name(item, "instances")
-    mcp_bundled = item.get("mcp_bundled")
-    if not mcp_bundled or not isinstance(mcp_bundled, str):
-        raise ManifestError(f"instance '{name}' に mcp_bundled（文字列）が必要です")
+    bundle = item.get("bundle")
+    if not bundle or not isinstance(bundle, str):
+        raise ManifestError(f"instance '{name}' に bundle（文字列）が必要です")
     return InstanceSpec(
         name=name,
-        mcp_bundled=mcp_bundled,
+        bundle=bundle,
         defaults=_mapping(item, "defaults", "instances", name),
         secrets=_mapping(item, "secrets", "instances", name),
     )
@@ -328,9 +326,9 @@ def _parse_step(item: dict, owner: str, kind: str) -> WorkflowStep:
     where = f"{kind} '{owner}' の steps[]"
     if not isinstance(item, dict):
         raise ManifestError(f"{where} の各要素はマッピングである必要があります")
-    bundled = item.get("mcp_bundled")
+    bundled = item.get("bundle")
     if not bundled or not isinstance(bundled, str):
-        raise ManifestError(f"{where} に mcp_bundled（文字列）が必要です")
+        raise ManifestError(f"{where} に bundle（文字列）が必要です")
     raw_input = item.get("input")
     if raw_input is None:
         raw_input = {}
@@ -338,7 +336,7 @@ def _parse_step(item: dict, owner: str, kind: str) -> WorkflowStep:
         raise ManifestError(
             f"{where} '{bundled}' の input はマッピングが必要です（got {type(raw_input).__name__}）"
         )
-    return WorkflowStep(mcp_bundled=bundled, input=raw_input)
+    return WorkflowStep(bundle=bundled, input=raw_input)
 
 
 # --- 相互参照の検証 ------------------------------------------------------------
@@ -350,7 +348,7 @@ def _validate(m: Manifest) -> None:
         "mcp_servers",
         "subagents",
         "skills",
-        "mcp_bundled",
+        "bundles",
         "instances",
         "workflows",
         "schedules",
@@ -360,7 +358,7 @@ def _validate(m: Manifest) -> None:
     servers = set(m.names("mcp_servers"))
     subagents = set(m.names("subagents"))
     skills = set(m.names("skills"))
-    bundles = set(m.names("mcp_bundled"))
+    bundles = set(m.names("bundles"))
     server_versions = {s.name: s.version for s in m.mcp_servers}
 
     for sa in m.subagents:
@@ -370,45 +368,39 @@ def _validate(m: Manifest) -> None:
                     f"subagent '{sa.name}': allow_tools が未定義の mcp_server を参照: {tool}"
                 )
 
-    for b in m.mcp_bundled:
+    for b in m.bundles:
         if b.subagent is not None and b.subagent not in subagents:
-            raise ManifestError(f"mcp_bundled '{b.name}': 未定義の subagent を参照: {b.subagent}")
+            raise ManifestError(f"bundle '{b.name}': 未定義の subagent を参照: {b.subagent}")
         for skill in b.skills:
             if skill not in skills:
-                raise ManifestError(f"mcp_bundled '{b.name}': 未定義の skill を参照: {skill}")
+                raise ManifestError(f"bundle '{b.name}': 未定義の skill を参照: {skill}")
         for t in b.tools:
             if t.from_name not in servers:
                 raise ManifestError(
-                    f"mcp_bundled '{b.name}' の tool '{t.bind}': "
+                    f"bundle '{b.name}' の tool '{t.bind}': "
                     f"未定義の mcp_server を参照: {t.from_name}"
                 )
             if t.constraint is not None:
                 _check_constraint(b, t, server_versions[t.from_name])
 
     for inst in m.instances:
-        if inst.mcp_bundled not in bundles:
-            raise ManifestError(
-                f"instance '{inst.name}': 未定義の mcp_bundled を参照: {inst.mcp_bundled}"
-            )
+        if inst.bundle not in bundles:
+            raise ManifestError(f"instance '{inst.name}': 未定義の bundle を参照: {inst.bundle}")
 
     for wf in m.workflows:
         for step in wf.steps:
-            if step.mcp_bundled not in bundles:
-                raise ManifestError(
-                    f"workflow '{wf.name}': 未定義の mcp_bundled を参照: {step.mcp_bundled}"
-                )
+            if step.bundle not in bundles:
+                raise ManifestError(f"workflow '{wf.name}': 未定義の bundle を参照: {step.bundle}")
 
     for sch in m.schedules:
         for step in sch.steps:
-            if step.mcp_bundled not in bundles:
-                raise ManifestError(
-                    f"schedule '{sch.name}': 未定義の mcp_bundled を参照: {step.mcp_bundled}"
-                )
+            if step.bundle not in bundles:
+                raise ManifestError(f"schedule '{sch.name}': 未定義の bundle を参照: {step.bundle}")
 
 
-def _check_constraint(b: McpBundledSpec, t: ToolBinding, server_version: str | None) -> None:
+def _check_constraint(b: BundleSpec, t: ToolBinding, server_version: str | None) -> None:
     """tool 束縛の version 制約を、参照先 mcp_server の宣言 version と照合する。"""
-    where = f"mcp_bundled '{b.name}' の tool '{t.bind}'"
+    where = f"bundle '{b.name}' の tool '{t.bind}'"
     if server_version is None:
         raise ManifestError(
             f"{where}: version 制約 '{t.constraint}' があるが "

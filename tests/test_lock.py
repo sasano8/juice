@@ -25,8 +25,8 @@ subagents:
 skills:
   - name: report-weather
 
-mcp_bundled:
-  - name: weather-bot
+bundles:
+  - name: mcp_weather-bot
     subagent: forecaster
     skills: [report-weather]
     tools:
@@ -35,7 +35,7 @@ mcp_bundled:
 
 instances:
   - name: tokyo-weather-bot
-    mcp_bundled: weather-bot
+    bundle: mcp_weather-bot
     defaults:
       city: "Tokyo"
 """
@@ -55,7 +55,7 @@ def test_build_lock_structure():
     assert len(lock.instances) == 1
     inst = lock.instances[0]
     assert inst.name == "tokyo-weather-bot"
-    assert inst.mcp_bundled == "weather-bot"
+    assert inst.bundle == "mcp_weather-bot"
     assert inst.subagent == "forecaster"
     assert inst.skills == ["report-weather"]
     assert inst.mcp_servers == ["weather"]  # tool binding の from_name から解決
@@ -100,7 +100,7 @@ def test_dedup_servers_in_instance_closure():
 apiVersion: juice/v1
 mcp_servers:
   - name: weather
-mcp_bundled:
+bundles:
   - name: bot
     tools:
       - bind: w1
@@ -109,7 +109,7 @@ mcp_bundled:
         from: mcp_server:weather
 instances:
   - name: inst
-    mcp_bundled: bot
+    bundle: bot
 """
     inst = build_lock(parse_manifest(text)).instances[0]
     assert inst.mcp_servers == ["weather"]  # 重複は出現順を保って 1 つに

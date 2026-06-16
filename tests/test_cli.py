@@ -23,7 +23,7 @@ def test_parser_all_list() -> None:
 
 
 def test_parser_run_defaults_to_api() -> None:
-    args = build_parser().parse_args(["mcp_bundled", "run", "weather-bot"])
+    args = build_parser().parse_args(["bundle", "run", "mcp_weather-bot"])
     assert args.action == "run"
     assert args.mode == "api"
 
@@ -37,7 +37,7 @@ def test_registry_verify_ok_on_real_registry(capsys: pytest.CaptureFixture[str])
 
 def test_parser_run_rejects_unknown_mode() -> None:
     with pytest.raises(SystemExit):
-        build_parser().parse_args(["mcp_bundled", "run", "weather-bot", "bogus"])
+        build_parser().parse_args(["bundle", "run", "mcp_weather-bot", "bogus"])
 
 
 def test_parser_workflow_build_has_build_deps_default_off() -> None:
@@ -48,12 +48,12 @@ def test_parser_workflow_build_has_build_deps_default_off() -> None:
 
 _WF_MANIFEST = """\
 apiVersion: juice/v1
-mcp_bundled:
-  - name: weather-bot
+bundles:
+  - name: mcp_weather-bot
 workflows:
   - name: live-bots
     steps:
-      - mcp_bundled: weather-bot
+      - bundle: mcp_weather-bot
 """
 
 
@@ -65,7 +65,7 @@ def test_workflow_build_generates_without_build_deps(tmp_path, capsys) -> None:
     rc = main(["workflow", "build", "live-bots", "-f", str(juice_yaml), "-o", str(out)])
     assert rc == 0
     assert (out / "live-bots" / "docker-compose.yml").exists()
-    assert "build targets (mcp_bundled): weather-bot" in capsys.readouterr().out
+    assert "build targets (bundle): mcp_weather-bot" in capsys.readouterr().out
 
 
 def test_main_tool_list(capsys: pytest.CaptureFixture[str]) -> None:
@@ -100,7 +100,7 @@ def test_main_all_list_prints_labels(capsys: pytest.CaptureFixture[str]) -> None
     # 全レイヤのラベル見出しが出る（見出しは registry ディレクトリ名＝複数形）
     assert "== tools ==" in out
     assert "== bundles ==" in out
-    assert "weather-bot" in out
+    assert "mcp_weather-bot" in out
 
 
 def test_main_instance_list(capsys: pytest.CaptureFixture[str]) -> None:
@@ -132,14 +132,14 @@ apiVersion: juice/v1
 mcp_servers:
   - name: weather
     package: "@example/mcp-weather"
-mcp_bundled:
-  - name: weather-bot
+bundles:
+  - name: mcp_weather-bot
     tools:
       - bind: weather
         from: mcp_server:weather
 instances:
   - name: tokyo-weather-bot
-    mcp_bundled: weather-bot
+    bundle: mcp_weather-bot
 """
 
 

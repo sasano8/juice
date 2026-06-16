@@ -31,8 +31,8 @@ skills:
   - name: report-weather
     description: 天気を要約する
 
-mcp_bundled:
-  - name: weather-bot
+bundles:
+  - name: mcp_weather-bot
     subagent: forecaster
     skills: [report-weather]
     tools:
@@ -42,7 +42,7 @@ mcp_bundled:
 
 instances:
   - name: tokyo-weather-bot
-    mcp_bundled: weather-bot
+    bundle: mcp_weather-bot
     defaults:
       city: "Tokyo"
     secrets:
@@ -58,15 +58,15 @@ mcp_servers:
 subagents:
   - name: forecaster
     allow_tools: [weather]
-mcp_bundled:
-  - name: weather-bot
+bundles:
+  - name: mcp_weather-bot
     subagent: forecaster
     tools:
       - bind: weather
         from: mcp_server:weather
 instances:
   - name: tokyo-weather-bot
-    mcp_bundled: weather-bot
+    bundle: mcp_weather-bot
 """
 
 
@@ -82,7 +82,7 @@ def test_apply_creates_all_layers(regs):
         "tool/weather",
         "skill/report-weather",
         "subagent/forecaster",
-        "mcp_bundled/weather-bot",
+        "bundle/mcp_weather-bot",
         "instance/tokyo-weather-bot",
     }
     assert r["pruned"] == []
@@ -90,7 +90,7 @@ def test_apply_creates_all_layers(regs):
     assert regs.exists("tool", "weather")
     assert regs.exists("subagent", "forecaster")
     assert regs.exists("skill", "report-weather")
-    assert regs.exists("mcp_bundled", "weather-bot")
+    assert regs.exists("bundle", "mcp_weather-bot")
     assert regs.exists("instance", "tokyo-weather-bot")
 
 
@@ -150,14 +150,14 @@ def test_materialized_skill_has_okf_type(regs):
     assert "type: skill" in text  # OKF 必須の concept type
 
 
-# workflow（常駐サービス群）を加えた manifest。base の weather-bot bundle を協調する。
+# workflow（常駐サービス群）を加えた manifest。base の mcp_weather-bot bundle を協調する。
 MANIFEST_WITH_WORKFLOW = (
     MANIFEST
     + """
 workflows:
   - name: weather-service
     steps:
-      - mcp_bundled: weather-bot
+      - bundle: mcp_weather-bot
         input:
           city: "Tokyo"
 """
@@ -172,7 +172,7 @@ def test_apply_materializes_workflow(regs):
     assert "kind: workflow" in text
     assert "type: workflow" in text  # OKF 必須の concept type
     assert "schedule:" not in text  # schedule は workflow の持ち物ではない（別概念）
-    assert "mcp_bundled: weather-bot" in text
+    assert "bundle: mcp_weather-bot" in text
     assert "city: Tokyo" in text
 
 
@@ -192,7 +192,7 @@ schedules:
   - name: morning-brief
     schedule: "0 7 * * *"
     steps:
-      - mcp_bundled: weather-bot
+      - bundle: mcp_weather-bot
         input:
           city: "Tokyo"
 """
@@ -207,7 +207,7 @@ def test_apply_materializes_schedule(regs):
     assert "kind: schedule" in text
     assert "type: schedule" in text  # OKF 必須の concept type
     assert "schedule:" in text  # cron を持つ（workflow との違い）
-    assert "mcp_bundled: weather-bot" in text
+    assert "bundle: mcp_weather-bot" in text
 
 
 def test_apply_schedule_is_idempotent(regs):

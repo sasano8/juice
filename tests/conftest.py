@@ -55,10 +55,10 @@ description: 天気を要約して伝える
 
 _BUNDLE_YML = """\
 apiVersion: juice/v1
-kind: mcp_bundled
-name: weather-bot
+kind: bundle
+name: mcp_weather-bot
 namespace: default
-image: juice/weather-bot
+image: juice/mcp_weather-bot
 version: 0.0.1
 llm:
   provider: anthropic
@@ -82,7 +82,7 @@ _LAYOUT = {
     "tools/weather/server.py": _TOOL_SERVER,
     "subagents/forecaster/index.md": _SUBAGENT_INDEX,
     "skills/report-weather/SKILL.md": _SKILL,
-    "bundles/weather-bot/bundle.yml": _BUNDLE_YML,
+    "bundles/mcp_weather-bot/bundle.yml": _BUNDLE_YML,
 }
 
 

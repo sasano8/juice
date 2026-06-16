@@ -19,15 +19,15 @@ mcp_servers:
 subagents:
   - name: forecaster
     allow_tools: [weather]
-mcp_bundled:
-  - name: weather-bot
+bundles:
+  - name: mcp_weather-bot
     subagent: forecaster
     tools:
       - bind: weather
         from: mcp_server:weather
 instances:
   - name: tokyo-weather-bot
-    mcp_bundled: weather-bot
+    bundle: mcp_weather-bot
     defaults:
       city: "Tokyo"
 """

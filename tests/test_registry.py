@@ -8,7 +8,7 @@ from src.core import ALL_ORDER, RegistryArray
 def test_list_single_layer(registries: RegistryArray) -> None:
     assert registries.list("tool") == ["weather"]
     assert registries.list("subagent") == ["forecaster"]
-    assert registries.list("mcp_bundled") == ["weather-bot"]
+    assert registries.list("bundle") == ["mcp_weather-bot"]
 
 
 def test_list_empty_layer(registries: RegistryArray) -> None:

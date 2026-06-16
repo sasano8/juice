@@ -23,7 +23,7 @@ from pathlib import Path
 
 import yaml
 
-from .manifest import Manifest, McpBundledSpec, ScheduleSpec, WorkflowSpec
+from .manifest import BundleSpec, Manifest, ScheduleSpec, WorkflowSpec
 
 DEPLOY_DIR = "deploy"
 DEFAULT_TARGET = "compose"
@@ -48,17 +48,17 @@ def find_schedule(manifest: Manifest, name: str) -> ScheduleSpec:
 
 
 def dependency_closure(manifest: Manifest, steps: list) -> dict:
-    """steps が参照する mcp_bundled と、その依存（subagent/skill/tool）を**遡って**解決する。
+    """steps が参照する bundle と、その依存（subagent/skill/tool）を**遡って**解決する。
 
-    返り値 `{mcp_bundled, subagent, skill, tool}`（各レイヤの名前リスト、宣言順・重複なし）。
-    **ビルド対象は mcp_bundled**（`bundle` が subagent/skill/tool を vendoring して image 化）。
+    返り値 `{bundle, subagent, skill, tool}`（各レイヤの名前リスト、宣言順・重複なし）。
+    **ビルド対象は bundle**（`bundle` が subagent/skill/tool を vendoring して image 化）。
     「宣言 → 依存物を遡る」の起点になる。実 docker ビルドの起動はしない（呼び出し側の責務）。
     """
-    bundles = {b.name: b for b in manifest.mcp_bundled}
+    bundles = {b.name: b for b in manifest.bundles}
     wanted: list[str] = []
     for st in steps:
-        if st.mcp_bundled not in wanted:
-            wanted.append(st.mcp_bundled)
+        if st.bundle not in wanted:
+            wanted.append(st.bundle)
     subagents: list[str] = []
     skills: list[str] = []
     tools: list[str] = []
@@ -74,20 +74,20 @@ def dependency_closure(manifest: Manifest, steps: list) -> dict:
         for t in b.tools:
             if t.from_name not in tools:
                 tools.append(t.from_name)
-    return {"mcp_bundled": wanted, "subagent": subagents, "skill": skills, "tool": tools}
+    return {"bundle": wanted, "subagent": subagents, "skill": skills, "tool": tools}
 
 
-def _image(bundle: McpBundledSpec) -> str:
-    """mcp_bundled の image 名（規約 `juice/<name>`、version があれば tag を付ける）。"""
+def _image(bundle: BundleSpec) -> str:
+    """bundle の image 名（規約 `juice/<name>`、version があれば tag を付ける）。"""
     base = f"juice/{bundle.name}"
     return f"{base}:{bundle.version}" if bundle.version else base
 
 
 def _named_steps(steps: list):
-    """(service 名, step) を決定的に列挙する。同一 mcp_bundled の複数 step は連番で衝突回避。"""
+    """(service 名, step) を決定的に列挙する。同一 bundle の複数 step は連番で衝突回避。"""
     used: dict[str, int] = {}
     for step in steps:
-        svc = step.mcp_bundled
+        svc = step.bundle
         used[svc] = used.get(svc, 0) + 1
         if used[svc] > 1:
             svc = f"{svc}-{used[svc]}"
@@ -99,7 +99,7 @@ def _env_list(step_input: dict) -> list[dict]:
     return [{"name": k, "value": str(v)} for k, v in step_input.items()]
 
 
-def _container(svc: str, bundle: McpBundledSpec, step_input: dict) -> dict:
+def _container(svc: str, bundle: BundleSpec, step_input: dict) -> dict:
     container: dict = {"name": svc, "image": _image(bundle)}
     if step_input:
         container["env"] = _env_list(step_input)
@@ -111,10 +111,10 @@ def _container(svc: str, bundle: McpBundledSpec, step_input: dict) -> dict:
 
 def build_compose(manifest: Manifest, workflow: WorkflowSpec) -> dict:
     """workflow を docker-compose（v2）の dict へ決定的に変換する（常駐 service）。"""
-    bundles = {b.name: b for b in manifest.mcp_bundled}
+    bundles = {b.name: b for b in manifest.bundles}
     services: dict = {}
     for svc, step in _named_steps(workflow.steps):
-        service: dict = {"image": _image(bundles[step.mcp_bundled]), "restart": "unless-stopped"}
+        service: dict = {"image": _image(bundles[step.bundle]), "restart": "unless-stopped"}
         if step.input:
             service["environment"] = {k: str(v) for k, v in step.input.items()}
         service["labels"] = {"juice.workflow": workflow.name}
@@ -124,11 +124,11 @@ def build_compose(manifest: Manifest, workflow: WorkflowSpec) -> dict:
 
 def build_k8s(manifest: Manifest, workflow: WorkflowSpec) -> list[dict]:
     """workflow を k8s Deployment（複数リソース）へ決定的に変換する（常駐 replicas:1）。"""
-    bundles = {b.name: b for b in manifest.mcp_bundled}
+    bundles = {b.name: b for b in manifest.bundles}
     resources: list[dict] = []
     for svc, step in _named_steps(workflow.steps):
         pod_labels = {"app": svc, "juice.workflow": workflow.name}
-        container = _container(svc, bundles[step.mcp_bundled], step.input)
+        container = _container(svc, bundles[step.bundle], step.input)
         resources.append(
             {
                 "apiVersion": "apps/v1",
@@ -159,10 +159,10 @@ def build_schedule_compose(manifest: Manifest, schedule: ScheduleSpec) -> dict:
     `restart: "no"`＋`profiles: [scheduled]`（`docker compose up` で勝手に起動しない）。
     cron 値は label に保持し、外部 cron が `docker compose run <svc>` で起動する想定。
     """
-    bundles = {b.name: b for b in manifest.mcp_bundled}
+    bundles = {b.name: b for b in manifest.bundles}
     services: dict = {}
     for svc, step in _named_steps(schedule.steps):
-        service: dict = {"image": _image(bundles[step.mcp_bundled]), "restart": "no"}
+        service: dict = {"image": _image(bundles[step.bundle]), "restart": "no"}
         if step.input:
             service["environment"] = {k: str(v) for k, v in step.input.items()}
         service["profiles"] = ["scheduled"]
@@ -173,7 +173,7 @@ def build_schedule_compose(manifest: Manifest, schedule: ScheduleSpec) -> dict:
 
 def build_schedule_k8s(manifest: Manifest, schedule: ScheduleSpec) -> list[dict]:
     """schedule を k8s CronJob（複数リソース）へ決定的に変換する。"""
-    bundles = {b.name: b for b in manifest.mcp_bundled}
+    bundles = {b.name: b for b in manifest.bundles}
     resources: list[dict] = []
     for svc, step in _named_steps(schedule.steps):
         pod_labels = {"app": svc, "juice.scheduled": schedule.name}
@@ -194,7 +194,7 @@ def build_schedule_k8s(manifest: Manifest, schedule: ScheduleSpec) -> list[dict]
                                 "spec": {
                                     "restartPolicy": "OnFailure",
                                     "containers": [
-                                        _container(svc, bundles[step.mcp_bundled], step.input)
+                                        _container(svc, bundles[step.bundle], step.input)
                                     ],
                                 },
                             }
