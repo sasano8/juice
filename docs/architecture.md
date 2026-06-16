@@ -1,5 +1,11 @@
 # アーキテクチャ（レイヤ関係）
 
+> **juice の位置づけ:** AI エージェントのための**宣言的パッケージマネージャー＋デリバリ・パイプライン**。
+> 1 つの spec（`juice.yaml`）から「動かせる成果物」（registries / image / compose・k8s manifest）まで
+> 生成する。juice 自身は実行せず、実行基盤（docker / k8s＋ArgoCD / cron）に委譲する。現状は AI エージェント
+> に特化（リファレンス・フレーバー＝チャット）だが、機構は組織内資産（dataset / model / 知識）へ一般化
+> しうる（構想）。製品像は [README](../README.md)。
+
 > juice の全体像を **2 軸** で捉える。
 > 1. **概念モデル** … mcp_server / mcp_bundled / subagent / skill / tool の関係（本書前半）。
 > 2. **宣言的ワークスペース** … その概念モデルを `juice.yaml` 1 ファイルで宣言し、
