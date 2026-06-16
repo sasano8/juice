@@ -14,8 +14,10 @@ from .deploy import (
     build_deployment,
     build_schedule_deployment,
     dependency_closure,
+    is_vendored_workflow,
     write_deployment,
     write_schedule_deployment,
+    write_vendored_workflow,
 )
 from .factory import create_registries, create_registry, create_storage
 from .index import build_index, index_status, write_index
@@ -79,8 +81,10 @@ __all__ = [
     "build_deployment",
     "build_schedule_deployment",
     "dependency_closure",
+    "is_vendored_workflow",
     "write_deployment",
     "write_schedule_deployment",
+    "write_vendored_workflow",
     "apply_manifest",
     "Version",
     "SemverError",

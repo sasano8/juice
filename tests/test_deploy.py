@@ -17,8 +17,10 @@ from src.core.deploy import (
     dependency_closure,
     find_schedule,
     find_workflow,
+    is_vendored_workflow,
     write_deployment,
     write_schedule_deployment,
+    write_vendored_workflow,
 )
 from src.core.manifest import parse_manifest
 
@@ -169,6 +171,34 @@ def test_workflow_k8s_is_deployment():
     assert dep["apiVersion"] == "apps/v1"
     assert dep["spec"]["replicas"] == 1
     assert dep["metadata"]["name"] == "live-bots-mcp_weather-bot"
+
+
+# --- vendored workflow（終端：外部 compose をそのまま同梱） ----------------------
+
+
+def _put_vendored(bucket: str, name: str, body: str) -> None:
+    wf = Path(bucket) / "namespaces" / "default" / "workflows" / name
+    wf.mkdir(parents=True, exist_ok=True)
+    (wf / "docker-compose.yml").write_text(body, encoding="utf-8")
+
+
+def test_is_vendored_workflow_detects_compose(registries, bucket: str):
+    assert not is_vendored_workflow(registries, "ghost")  # 無いものは False
+    _put_vendored(bucket, "ext", "name: ext\nservices:\n  a:\n    image: nginx\n")
+    assert is_vendored_workflow(registries, "ext")
+
+
+def test_write_vendored_workflow_passthrough(registries, bucket: str, tmp_path: Path):
+    _put_vendored(
+        bucket, "ext", "name: ext\nservices:\n  a:\n    image: nginx\n  b:\n    image: redis\n"
+    )
+    out = str(tmp_path / "deploy")
+    res = write_vendored_workflow(registries, "ext", out_dir=out)
+    assert res["vendored"] is True
+    assert res["services"] == 2
+    assert res["closure"]["bundle"] == []  # 終端＝依存物なし（closure 空）
+    # 生成せずそのまま写す（passthrough）。
+    assert Path(res["out"]).read_text(encoding="utf-8").startswith("name: ext")
 
 
 # --- schedule（定期実行のトリガ） -----------------------------------------------

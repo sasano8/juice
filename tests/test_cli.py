@@ -68,6 +68,17 @@ def test_workflow_build_generates_without_build_deps(tmp_path, capsys) -> None:
     assert "build targets (bundle): mcp_weather-bot" in capsys.readouterr().out
 
 
+def test_workflow_build_vendored_passthrough(tmp_path, capsys) -> None:
+    # 同梱 registry の langfuse は vendored workflow（終端）→ compose を passthrough。
+    out = tmp_path / "deploy"
+    rc = main(["workflow", "build", "langfuse", "-o", str(out)])
+    assert rc == 0
+    assert (out / "langfuse" / "docker-compose.yml").exists()
+    printed = capsys.readouterr().out
+    assert "vendored" in printed
+    assert "build targets (bundle): (none)" in printed  # 依存物なし＝終端
+
+
 def test_main_tool_list(capsys: pytest.CaptureFixture[str]) -> None:
     rc = main(["tool", "list"])
     assert rc == 0

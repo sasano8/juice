@@ -18,10 +18,12 @@ from ..core import (
     Juice,
     LockError,
     ManifestError,
+    is_vendored_workflow,
     load_manifest,
     write_deployment,
     write_lock,
     write_schedule_deployment,
+    write_vendored_workflow,
 )
 
 # 宣言ライフサイクル（juice.yaml）の典型フロー。トップレベル -h の epilog に出す。
@@ -458,7 +460,19 @@ def _build_deps(closure: dict) -> int:
 
 
 def _cmd_workflow_build(name: str, file: str, out: str, target: str, build_deps: bool) -> int:
-    """workflow からデプロイ成果物（docker-compose.yml 等）を生成する（不正なら 1）。"""
+    """workflow からデプロイ成果物（docker-compose.yml 等）を生成する（不正なら 1）。
+
+    registry に同梱 compose を持つ **vendored workflow**（終端・外部スタック）はそれを
+    そのまま passthrough し、manifest は読まない。それ以外は manifest の steps から生成する。
+    """
+    juice = Juice()
+    if is_vendored_workflow(juice.registries, name):
+        if target != "compose":
+            return _fail(f"vendored workflow '{name}' は compose のみ（--target {target} は不可）")
+        result = write_vendored_workflow(juice.registries, name, out_dir=out)
+        print(f"deployed (vendored): {result['out']} ({result['services']} services, 終端)")
+        _print_closure(result["closure"])  # 依存物なし → (none)
+        return 0
     try:
         manifest = load_manifest(file)
     except ManifestError as e:

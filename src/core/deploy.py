@@ -24,9 +24,13 @@ from pathlib import Path
 import yaml
 
 from .manifest import BundleSpec, Manifest, ScheduleSpec, WorkflowSpec
+from .registry import RegistryArray
 
 DEPLOY_DIR = "deploy"
 DEFAULT_TARGET = "compose"
+# vendored workflow（終端：依存 bundle を持たず、compose を直に同梱）のファイル名。
+VENDORED_COMPOSE = "docker-compose.yml"
+_EMPTY_CLOSURE = {"bundle": [], "subagent": [], "skill": [], "tool": []}
 
 _HEADER = "# 生成物。手で編集しない（`juice workflow build` / `juice schedule build` で再生成）。\n"
 
@@ -75,6 +79,38 @@ def dependency_closure(manifest: Manifest, steps: list) -> dict:
             if t.from_name not in tools:
                 tools.append(t.from_name)
     return {"bundle": wanted, "subagent": subagents, "skill": skills, "tool": tools}
+
+
+def is_vendored_workflow(registries: RegistryArray, name: str) -> bool:
+    """workflow `name` が vendored（registry に `docker-compose.yml` を直に持つ終端）か。
+
+    juice bundle を steps で組む生成型 workflow に対し、外部スタック（例: langfuse）を
+    そのまま持つ終端 workflow。依存物（bundle）が無いので dependency_closure は空になる。
+    """
+    return registries.exists("workflow", name, VENDORED_COMPOSE)
+
+
+def write_vendored_workflow(
+    registries: RegistryArray, name: str, out_dir: str = DEPLOY_DIR
+) -> dict:
+    """vendored workflow の同梱 compose を生成せず deploy へ**そのまま passthrough** する。
+
+    registry の `workflows/<name>/docker-compose.yml` を `out_dir/<name>/` へ写すだけ。
+    終端なので closure は空。target は compose のみ（外部 compose を k8s 変換はしない）。
+    """
+    text = registries.read("workflow", name, VENDORED_COMPOSE)
+    dest = Path(out_dir) / name / VENDORED_COMPOSE
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(text, encoding="utf-8")
+    data = yaml.safe_load(text)
+    services = len(data.get("services", {})) if isinstance(data, dict) else 0
+    return {
+        "out": str(dest),
+        "target": "compose",
+        "vendored": True,
+        "services": services,
+        "closure": dict(_EMPTY_CLOSURE),
+    }
 
 
 def _image(bundle: BundleSpec) -> str:

@@ -105,6 +105,14 @@ schedule/workflow の steps が参照する bundle を起点に、その subagen
 `juice schedule build` は生成時にこの「遡った build 対象」を表示する。`--build-deps` を付けると closure の
 bundle を宣言順に `bundle → build`（docker）まで起動する（既定 off）。
 
+**vendored workflow（終端・外部スタック）:** workflow には steps から生成する型のほかに、registry の
+`workflows/<name>/docker-compose.yml` を**直に同梱する終端ノード**がある（例: `langfuse`）。juice の bundle に
+依存しない（dependency closure は空）外部スタックを「そのまま持つ」形で、`juice workflow build <name>` は
+生成せず同梱 compose を `deploy/<name>/` へ **passthrough** する。juice の本質は依存解決なので、依存物が無い
+ものは終端としてこのレイヤに置けばよい（`bundle` の MCP バンドラーを通さない経路）。`index.md` に
+`vendored: compose` を持ち、registry の健全性検査（name=dir / OKF type）は通常どおり通る。※現状は registry に
+**手で置く**前提（juice.yaml manifest 管理＝apply の prune 対象ではない）。manifest からの宣言管理は将来。
+
 ### 概念モデルと宣言の対応
 
 `juice.yaml` の各キーは、前半の概念モデルのレイヤに 1:1 で対応する（**同じレイヤの別表現**）。
