@@ -129,6 +129,31 @@ mcp_servers:
     assert d["mcp_servers"][0]["version"] == "2.1.0"
 
 
+def test_lock_records_remote_url_and_transport():
+    text = """\
+apiVersion: juice/v1
+mcp_servers:
+  - name: ext
+    url: https://mcp.example.com/sse
+    transport: sse
+"""
+    lock = build_lock(parse_manifest(text))
+    s = lock.mcp_servers[0]
+    assert s.url == "https://mcp.example.com/sse"
+    assert s.transport == "sse"
+    assert s.command is None
+    d = lock_to_dict(lock)
+    assert d["mcp_servers"][0]["url"] == "https://mcp.example.com/sse"
+    assert d["mcp_servers"][0]["transport"] == "sse"
+
+
+def test_local_server_locks_null_url_and_transport():
+    lock = build_lock(parse_manifest(VALID))
+    s = lock.mcp_servers[0]
+    assert s.url is None
+    assert s.transport is None
+
+
 def test_digest_changes_with_version():
     base = """\
 apiVersion: juice/v1

@@ -154,6 +154,9 @@ def _ensure_api_key() -> None:
 def _connections() -> dict:
     conns = {}
     for name, c in CONFIG.get("mcp_servers", {}).items():
+        if c.get("url"):  # remote: url で接続（command/args を持たない）
+            conns[name] = {"transport": c.get("transport", "streamable_http"), "url": c["url"]}
+            continue
         args = [str(HERE / a) if isinstance(a, str) and a.endswith(".py") else a for a in c.get("args", [])]
         conns[name] = {"transport": c.get("transport", "stdio"), "command": c["command"], "args": args}
     return conns
@@ -373,6 +376,13 @@ def _agent_config(registries: RegistryArray, name: str, spec: dict) -> dict:
     tools = spec.get("tools") or {}
     for tname in list(tools.keys()) if isinstance(tools, dict) else list(tools):
         tmeta, _ = parse_frontmatter(registries.read("tool", tname))
+        if tmeta.get("url"):
+            # remote: 黒箱として url 接続する（vendoring しない＝起動コマンドを持たない）。
+            mcp_servers[tname] = {
+                "transport": tmeta.get("transport", "streamable_http"),
+                "url": tmeta["url"],
+            }
+            continue
         raw_args = tmeta.get("args") or []
         args = [
             f"{LAYERS['tool']}/{tname}/{a}" if isinstance(a, str) and a.endswith(".py") else a
@@ -401,6 +411,11 @@ def _vendor(registries: RegistryArray, name: str) -> list[str]:
     registries.remove("bundle", name, VENDOR_DIR)
     vendored: list[str] = []
     for layer, dep in _deps(spec, include):
+        if layer == "tool":
+            # remote tool（url 参照）は黒箱なので vendoring しない（E002）。
+            tmeta, _ = parse_frontmatter(registries.read("tool", dep))
+            if tmeta.get("url"):
+                continue
         for rel in registries.list_files(layer, dep):  # パッケージ配下の全ファイル
             raw = registries.read(layer, dep, rel)
             out = f"{VENDOR_DIR}/{LAYERS[layer]}/{dep}/{rel}"

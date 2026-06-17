@@ -307,6 +307,69 @@ def test_constraint_invalid_errors():
         parse_manifest(_bundle_with_from("mcp_server:weather@>=bad", "1.0.0"))
 
 
+# --- remote mcp_server（E002） -------------------------------------------------
+
+
+def _remote_server(extra: str = "") -> str:
+    return f"""\
+apiVersion: juice/v1
+mcp_servers:
+  - name: ext
+    url: https://mcp.example.com/sse{extra}
+"""
+
+
+def test_remote_server_parsed_with_default_transport():
+    m = parse_manifest(_remote_server())
+    s = m.mcp_servers[0]
+    assert s.is_remote()
+    assert s.url == "https://mcp.example.com/sse"
+    assert s.transport == "streamable_http"  # 未指定なら既定
+    assert s.command is None
+
+
+def test_remote_server_explicit_transport():
+    m = parse_manifest(_remote_server(extra="\n    transport: sse"))
+    s = m.mcp_servers[0]
+    assert s.transport == "sse"
+
+
+def test_local_server_is_not_remote():
+    m = parse_manifest(VALID)
+    s = m.mcp_servers[0]
+    assert not s.is_remote()
+    assert s.url is None
+    assert s.transport is None
+
+
+def test_remote_with_command_errors():
+    text = """\
+apiVersion: juice/v1
+mcp_servers:
+  - name: ext
+    url: https://mcp.example.com/sse
+    command: npx -y @example/mcp
+"""
+    with pytest.raises(ManifestError, match="command を併用できません"):
+        parse_manifest(text)
+
+
+def test_remote_unsupported_transport_errors():
+    with pytest.raises(ManifestError, match="transport 'grpc' は未対応"):
+        parse_manifest(_remote_server(extra="\n    transport: grpc"))
+
+
+def test_transport_without_url_errors():
+    text = """\
+apiVersion: juice/v1
+mcp_servers:
+  - name: ext
+    transport: sse
+"""
+    with pytest.raises(ManifestError, match="url（remote）と共に"):
+        parse_manifest(text)
+
+
 def test_load_manifest_from_file(tmp_path):
     p = tmp_path / "juice.yaml"
     p.write_text(VALID, encoding="utf-8")

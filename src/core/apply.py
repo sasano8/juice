@@ -5,7 +5,8 @@ bundle → instance）に下層から registry レイアウトへ materialize（
 宣言にない既存パッケージは prune し、何度実行しても同じ状態へ収束する（冪等）。
 
 材料化（materialize）先は現行の registry エントリ形式（docs/build.md「registry レイアウト」）:
-- mcp_server → `tools/<name>/index.md`（frontmatter: kind/name/type/command/args/env）
+- mcp_server → `tools/<name>/index.md`（local: kind/name/type/command/args/env、
+  remote: kind/name/type/transport/url/env。E002）
 - subagent   → `subagents/<name>/index.md`（frontmatter＋本文 = prompt）
 - skill      → `skills/<name>/SKILL.md`
 - bundle     → `bundles/<name>/bundle.yml`
@@ -108,18 +109,28 @@ def _materialize(layer: str, item, ns: str) -> str:
 
 
 def _tool(s: McpServerSpec) -> str:
-    # command 文字列を「先頭=コマンド / 残り=args」に分解する（例: "npx -y pkg"）。
-    parts = (s.command or "").split()
-    command = parts[0] if parts else "python"
-    args = parts[1:]
-    meta: dict = {
-        "kind": "tool",
-        "name": s.name,
-        "type": "mcp-server",
-        "command": command,
-        "args": args,
-        "env": _env_refs(s.env),
-    }
+    if s.is_remote():
+        # remote: 起動定義（command/args）は持たず、接続先（transport / url）を記録する。
+        meta = {
+            "kind": "tool",
+            "name": s.name,
+            "type": "mcp-server",
+            "transport": s.transport,
+            "url": s.url,
+            "env": _env_refs(s.env),
+        }
+    else:
+        # local: command 文字列を「先頭=コマンド / 残り=args」に分解する（例: "npx -y pkg"）。
+        parts = (s.command or "").split()
+        command = parts[0] if parts else "python"
+        meta = {
+            "kind": "tool",
+            "name": s.name,
+            "type": "mcp-server",
+            "command": command,
+            "args": parts[1:],
+            "env": _env_refs(s.env),
+        }
     if s.package:
         meta["package"] = s.package
     return _frontmatter(meta, f"# {s.name}\n")

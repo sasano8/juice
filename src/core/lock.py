@@ -6,6 +6,7 @@
 現状の lock が固定するもの:
 - **manifestDigest** … manifest の宣言内容（spec）のハッシュ。spec/lock の drift 検出に使う。
 - **mcp_servers** … 各 server の `package` / `command` / `version` を pin する。
+  remote（外部参照）は `url` / `transport` も記録する（E002）。
 - **instances** … instance ごとの deployable な依存閉包（bundle → subagent / skills /
   結線された mcp_server）を解決して固定する。
 
@@ -27,7 +28,8 @@ import yaml
 from .manifest import Manifest, load_manifest
 
 # juice.lock のフォーマット版。スキーマを変えたら上げる。
-LOCK_VERSION = 1
+# v2: remote mcp_server の url / transport を記録（E002）。
+LOCK_VERSION = 2
 
 
 class LockError(Exception):
@@ -46,6 +48,8 @@ class LockedServer:
     package: str | None
     command: str | None
     version: str | None = None  # 宣言された SemVer（C004）。未指定なら None
+    url: str | None = None  # remote の接続先（local は None。E002）
+    transport: str | None = None  # remote の transport（local は None）
 
 
 @dataclass
@@ -93,6 +97,8 @@ def build_lock(manifest: Manifest) -> Lock:
             package=s.package,
             command=s.command,
             version=s.version,
+            url=s.url,
+            transport=s.transport,
         )
         for s in manifest.mcp_servers
     ]
@@ -138,6 +144,8 @@ def lock_to_dict(lock: Lock) -> dict:
                 "package": s.package,
                 "command": s.command,
                 "version": s.version,
+                "url": s.url,
+                "transport": s.transport,
             }
             for s in lock.mcp_servers
         ],

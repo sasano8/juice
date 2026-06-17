@@ -128,6 +128,23 @@ bundle を宣言順に `bundle → build`（docker）まで起動する（既定
 | workflow（常駐の協調） | `workflows:` | `steps[].bundle` を**常駐**させる定義（時間非依存）。`schedule` は持たない |
 | schedule（定期実行） | `schedules:` | `schedule`（cron）＋ `steps[]`。**いつ動かすか**を持つトリガ（scheduler の責務） |
 
+### mcp_server: local（同梱）と remote（外部参照）（E002）
+
+`mcp_servers:` の 1 エントリは 2 形態のいずれか。消費側（subagent の `allow_tools` / bundle の
+`tools[].from`）からは**どちらも同じ `mcp_server`** として見え、結線の書き方（`from: mcp_server:<name>`）
+は変わらない（remote は bind の新 kind ではなく、提供元 server の属性）。
+
+| 形態 | 宣言 | transport | materialize（`tools/<name>/index.md`） | vendoring |
+|------|------|-----------|----------------------------------------|-----------|
+| **local（同梱）** | `command:` | stdio | `command` / `args` / `env` | する（パッケージ丸ごと） |
+| **remote（外部参照）** | `url:`（＋任意 `transport:`） | `streamable_http`（既定）/ `sse` | `transport` / `url` / `env` | **しない**（黒箱） |
+
+- `command` と `url` は**排他**（local か remote のどちらか）。`transport` を remote 以外で単独宣言するのは不整合でエラー。
+- remote は juice が実体を持たない黒箱なので **bundle に vendoring されない**。build で生成される
+  `agent.json` の接続定義は `{transport, url}`（local の `{command, args}` と対）になり、graph.py は
+  url で接続する（`langchain-mcp-adapters` の HTTP transport）。
+- lock は remote の `url` / `transport` も記録する（`lockVersion: 2`）。
+
 ### version / 制約 / drift（再現性の補助線）
 
 - **version（C004）** … 各パッケージ Spec に任意の SemVer を付与（`src/core/semver.py`、外部依存なし）。

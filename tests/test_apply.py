@@ -135,6 +135,27 @@ def test_materialized_tool_content(regs):
     assert "WEATHER_API_KEY" in text
 
 
+def test_materialized_remote_tool_content(regs):
+    # remote（url 参照）は transport/url を持ち、command/args を持たない（E002）。
+    manifest = """\
+apiVersion: juice/v1
+mcp_servers:
+  - name: ext
+    url: https://mcp.example.com/sse
+    transport: sse
+    env: [API_TOKEN]
+"""
+    apply_manifest(regs, parse_manifest(manifest))
+    text = regs.read("tool", "ext")
+    assert "kind: tool" in text
+    assert "type: mcp-server" in text
+    assert "transport: sse" in text
+    assert "url: https://mcp.example.com/sse" in text
+    assert "API_TOKEN" in text
+    assert "command:" not in text  # 起動定義は持たない
+    assert "args:" not in text
+
+
 def test_materialized_subagent_keeps_prompt(regs):
     apply_manifest(regs, parse_manifest(MANIFEST))
     text = regs.read("subagent", "forecaster")

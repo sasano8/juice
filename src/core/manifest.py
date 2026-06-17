@@ -26,6 +26,10 @@ DEFAULT_NAMESPACE = "default"
 # `from: mcp_server:weather` の取り込み元として現在サポートする型。
 SUPPORTED_BIND_KINDS = ("mcp_server",)
 
+# remote mcp_server（url 参照）が取りうる transport（MCP の HTTP 系）。
+REMOTE_TRANSPORTS = ("streamable_http", "sse")
+DEFAULT_REMOTE_TRANSPORT = "streamable_http"
+
 
 class ManifestError(ValueError):
     """manifest の構造・参照が不正なときに投げる。"""
@@ -33,7 +37,13 @@ class ManifestError(ValueError):
 
 @dataclass
 class McpServerSpec:
-    """能力の提供元（最下層）。command/env を宣言するだけで命令的ビルドはしない。"""
+    """能力の提供元（最下層）。command/env を宣言するだけで命令的ビルドはしない。
+
+    2 形態:
+    - **local（同梱）** … `command` で stdio 起動する server。bundle へ vendoring される。
+    - **remote（外部参照）** … `url` で HTTP/SSE 接続する server。juice は実体を持たず黒箱として
+      参照するだけ（vendoring しない。E002）。`command` と `url` は排他。
+    """
 
     name: str
     package: str | None = None
@@ -41,6 +51,12 @@ class McpServerSpec:
     env: list[str] = field(default_factory=list)
     tools: list[str] = field(default_factory=list)
     version: str | None = None  # 任意。SemVer（不正なら parse 時に弾く）
+    url: str | None = None  # remote の接続先。指定されると remote 扱い（command と排他）
+    transport: str | None = None  # remote の transport（REMOTE_TRANSPORTS）。local は stdio 既定
+
+    def is_remote(self) -> bool:
+        """remote（url で外部参照する）server かどうか。"""
+        return self.url is not None
 
 
 @dataclass
@@ -209,13 +225,37 @@ def load_manifest(path: str | Path) -> Manifest:
 
 def _parse_mcp_server(item: dict) -> McpServerSpec:
     name = _require_name(item, "mcp_servers")
+    command = _opt_str(item, "command", "mcp_servers", name)
+    url = _opt_str(item, "url", "mcp_servers", name)
+    transport = _opt_str(item, "transport", "mcp_servers", name)
+    if url is not None:
+        # remote: command とは排他。transport は HTTP 系（未指定なら既定）。
+        if command is not None:
+            raise ManifestError(
+                f"mcp_server '{name}': remote（url 指定）では command を併用できません"
+                f"（local=command / remote=url のどちらか）"
+            )
+        if transport is None:
+            transport = DEFAULT_REMOTE_TRANSPORT
+        elif transport not in REMOTE_TRANSPORTS:
+            raise ManifestError(
+                f"mcp_server '{name}': remote の transport '{transport}' は未対応です"
+                f"（対応: {', '.join(REMOTE_TRANSPORTS)}）"
+            )
+    elif transport is not None and transport != "stdio":
+        # local（url 無し）で HTTP 系 transport だけ宣言するのは不整合。
+        raise ManifestError(
+            f"mcp_server '{name}': transport '{transport}' は url（remote）と共に指定してください"
+        )
     return McpServerSpec(
         name=name,
         package=_opt_str(item, "package", "mcp_servers", name),
-        command=_opt_str(item, "command", "mcp_servers", name),
+        command=command,
         env=_str_list(item, "env", "mcp_servers", name),
         tools=_str_list(item, "tools", "mcp_servers", name),
         version=_opt_version(item, "mcp_servers", name),
+        url=url,
+        transport=transport,
     )
 
 

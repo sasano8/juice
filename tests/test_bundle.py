@@ -77,6 +77,50 @@ def test_bundle_agent_json_resolves_config(juice: Juice) -> None:
     assert weather["transport"] == "stdio"
 
 
+_REMOTE_TOOL = """\
+---
+kind: tool
+name: ext
+type: mcp-server
+transport: sse
+url: https://mcp.example.com/sse
+env:
+  API_TOKEN: ${API_TOKEN}
+---
+
+# ext
+"""
+
+_REMOTE_BUNDLE = """\
+apiVersion: juice/v1
+kind: bundle
+name: remote-bot
+namespace: default
+image: juice/remote-bot
+version: 0.0.1
+tools:
+  ext:
+    env:
+      API_TOKEN: ${API_TOKEN}
+include:
+  - tools
+"""
+
+
+def test_remote_tool_connection_and_not_vendored(juice: Juice) -> None:
+    # remote tool（url 参照）は url 接続定義になり、vendoring されない（E002）。
+    juice.registries.write("tool", "ext", "index.md", _REMOTE_TOOL)
+    juice.registries.write("bundle", "remote-bot", "bundle.yml", _REMOTE_BUNDLE)
+    result = juice.bundle("remote-bot")
+    # remote tool は黒箱なので vendor/ に入らない
+    assert not any("vendor/tools/ext" in v for v in result["vendored"])
+    # agent.json の接続定義は transport/url（command/args を持たない）
+    agent_json = json.loads(juice.registries.read("bundle", "remote-bot", "vendor/agent.json"))
+    ext = agent_json["mcp_servers"]["ext"]
+    assert ext == {"transport": "sse", "url": "https://mcp.example.com/sse"}
+    assert "command" not in ext
+
+
 def test_build_command(juice: Juice, bucket: str) -> None:
     result = juice.build("mcp_weather-bot")
     assert result["image"] == "juice/mcp_weather-bot:latest"
