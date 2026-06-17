@@ -1,10 +1,10 @@
-"""LocalStorage の挙動テスト。"""
+"""LocalStorage の挙動テスト（juice_storage パッケージ）。"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from src.core import LocalStorage
+from juice_storage import LocalStorage
 
 
 def test_list_dirs_returns_sorted_names(tmp_path: Path) -> None:

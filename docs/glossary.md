@@ -48,6 +48,10 @@ namespaces/                      ← 最上位（namespace の容器）
   `python_packages` / 将来 `datasets` …）。物理的なストア（local / s3 …）の上に乗る。`Registry` クラスが 1 layer を、
   `RegistryArray` が 1 namespace の全 registry を束ねる。catalog（成果物の構造＝論理）と registry（その置き場）は
   同じものの両面で、衝突ではない。
+- **storage（`juice_storage` パッケージ）** … registry が乗る**物理ストアの抽象**（`Storage` ABC ＋ local 実装
+  `LocalStorage`。将来 s3 等）。juice 本体（`src`）から切り出した**独立パッケージ**で、リポジトリ最上位に
+  `src/` と同列で置き、juice の wheel に同梱して配布する（`pyproject.toml` の hatch packages）。juice 側の組み立ては
+  `src/core/factory.py`（backend 名→Storage 実装の単一差し込み点）。
 - **catalog の閲覧口** … `juice all list`（全 registry を依存順に横断一覧）。
 
 ## okf_catalog_cache（周辺機能・AI 連携用）＝ OKF メタデータの派生キャッシュ

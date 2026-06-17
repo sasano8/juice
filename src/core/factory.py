@@ -6,9 +6,10 @@ backend 名から Storage 実装を選ぶ単一の差し込み点。S3 等を足
 
 from __future__ import annotations
 
+from juice_storage import LocalStorage, Storage
+
 from .config import ALL_ORDER, LAYERS, Config, namespace_root
 from .registry import Registry, RegistryArray
-from .storage import LocalStorage, Storage
 
 # 既定値。どこにレジストリがあるか／どの区画かの既定はここが持つ。
 # local 既定の bucket は '.'（カレント）。最上位は namespaces/<ns>/<layer>/... になる。

@@ -1,7 +1,9 @@
-"""ストレージ抽象。
+"""juice_storage — ストレージ抽象（juice から切り出した独立パッケージ）。
 
-将来 S3 などのバックエンドを差し込めるよう、レジストリへのアクセスを
-この抽象越しに行う。まずはローカルファイルシステム実装のみ。
+レジストリ格納先へのアクセスをこの抽象越しに行うことで、将来 S3 などのバックエンドを
+差し込めるようにする。juice 本体（`src`）に依存しない単独パッケージで、juice の wheel に
+同梱して配布する（`pyproject.toml` の `[tool.hatch.build.targets.wheel]`）。まずはローカル
+ファイルシステム実装（[LocalStorage]）のみ。
 """
 
 from __future__ import annotations
@@ -9,6 +11,8 @@ from __future__ import annotations
 import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
+
+__all__ = ["Storage", "LocalStorage"]
 
 
 class Storage(ABC):
