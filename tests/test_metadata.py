@@ -89,11 +89,27 @@ def test_verify_names_detects_missing(bucket: str) -> None:
     assert "name がありません" in missing[0].message()
 
 
+def test_verify_names_checks_python_package(bucket: str) -> None:
+    # python_packages も name 検証の横断対象（実レイヤ化）。dir と name の不一致を報告する。
+    _write(
+        bucket,
+        "python_packages/mypkg/index.yml",
+        "apiVersion: juice/v1\nkind: python_package\nname: other\n",
+    )
+    issues = verify_names(create_registries(bucket=bucket, namespace="default"))
+    mine = [i for i in issues if i.dir_name == "mypkg"]
+    assert len(mine) == 1
+    assert mine[0].layer == "python_package"
+    assert mine[0].reason == "mismatch"
+    assert "python_packages/mypkg" in mine[0].message()
+
+
 def test_okf_md_layers_are_md_backed() -> None:
     # OKF 対象は .md concept document のレイヤのみ（純 YAML マニフェストは対象外）。
     assert set(OKF_MD_LAYERS) == {"tool", "skill", "subagent", "workflow", "schedule"}
     assert "bundle" not in OKF_MD_LAYERS
     assert "instance" not in OKF_MD_LAYERS
+    assert "python_package" not in OKF_MD_LAYERS  # 純 YAML（index.yml）なので OKF 検査外
 
 
 def test_verify_okf_clean_registry_has_no_issues(bucket: str) -> None:
@@ -124,3 +140,14 @@ def test_verify_okf_ignores_yaml_manifests(bucket: str) -> None:
     # bundle の bundle.yml は type を持たないが OKF 対象外なので報告されない。
     issues = verify_okf(create_registries(bucket=bucket, namespace="default"))
     assert all(i.layer != "bundle" for i in issues)
+
+
+def test_verify_okf_ignores_python_packages(bucket: str) -> None:
+    # python_package は純 YAML（index.yml）なので type 欠落でも OKF 対象外。
+    _write(
+        bucket,
+        "python_packages/mypkg/index.yml",
+        "apiVersion: juice/v1\nkind: python_package\nname: mypkg\n",
+    )
+    issues = verify_okf(create_registries(bucket=bucket, namespace="default"))
+    assert all(i.layer != "python_package" for i in issues)

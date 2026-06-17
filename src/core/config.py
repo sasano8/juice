@@ -38,6 +38,7 @@ LAYERS: dict[str, str] = {
     "workflow": "workflows",
     "schedule": "schedules",
     "instance": "instances",
+    "python_package": "python_packages",  # PyPI 様の registry（bundles と同列。layer=registry）
 }
 
 # 各レイヤのエントリファイル名（1 パッケージ = 1 ディレクトリ）
@@ -49,9 +50,10 @@ ENTRY_FILES: dict[str, str] = {
     "workflow": "index.md",
     "schedule": "index.md",  # 定期実行ワークロード（cron＋steps）の宣言
     "instance": "index.yml",
+    "python_package": "index.yml",  # 配布物の識別（純 YAML。OKF .md ではないので OKF 検査外）
 }
 
-# `juice all` の列挙順。依存の上位（具象=instance）から末端（tool）へ向かう順を明示宣言する。
+# `juice all` の列挙順。依存の上位（具象=instance）から末端（tool / python_package）へ向かう順。
 ALL_ORDER: list[str] = [
     "instance",
     "workflow",
@@ -60,6 +62,7 @@ ALL_ORDER: list[str] = [
     "subagent",
     "skill",
     "tool",
+    "python_package",  # 最下層の素材（PyPI 様の配布物）
 ]
 
 

@@ -21,6 +21,21 @@ def test_build_index_structure(registries) -> None:
     assert weather["metadata"]["name"] == "weather"
 
 
+def test_build_index_includes_python_package(bucket: str) -> None:
+    # python_packages レイヤも index 横断対象（実レイヤ化）。
+    pkg = Path(bucket) / "namespaces" / "default" / "python_packages" / "mypkg" / "index.yml"
+    pkg.parent.mkdir(parents=True, exist_ok=True)
+    pkg.write_text(
+        "apiVersion: juice/v1\nkind: python_package\nname: mypkg\nversion: 1.0.0\n",
+        encoding="utf-8",
+    )
+    index = build_index(create_registries(bucket=bucket, namespace="default"))
+    entry = next(p for p in index["packages"] if p["layer"] == "python_package")
+    assert entry["dir"] == "mypkg"
+    assert entry["metadata"]["name"] == "mypkg"
+    assert entry["metadata"]["version"] == "1.0.0"
+
+
 def test_write_index_is_idempotent(registries, tmp_path: Path) -> None:
     out = str(tmp_path / "juice.index.yml")
     write_index(registries, out)

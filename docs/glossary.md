@@ -33,18 +33,19 @@ namespaces/                      ← 最上位（namespace の容器）
     ├── workflows/ └ weather-service/index.md
     ├── schedules/ └ morning-brief/index.md
     ├── instances/ └ tokyo-weather-bot/index.yml
-    └── python_packages/  …      ← (将来) PyPI 様の registry（bundles と同列。構造のみ・未実装）
+    └── python_packages/ └ <name>/index.yml  ← PyPI 様の registry（bundles と同列・実レイヤ。同梱物はまだ無い）
 ```
 
 > **layer = registry:** 各 layer ディレクトリそれ自体が 1 つの registry（パッケージ索引）。`bundles` /
-> `tools` と同じ粒度で、将来 `datasets` / `python_packages` を**同列に**足せる。`python_packages/` に wheel を
-> 置けば juice の registry を PyPI のように使える、という拡張余地（現状は構造のみ・未実装）。
+> `tools` と同じ粒度で、将来 `datasets` 等を**同列に**足せる。`python_packages` は**実レイヤ化済み**
+> （`config.LAYERS` 登録で `all list` / `python_package list` / `registry verify` / `index` の横断対象）。
+> エントリは純 YAML `index.yml`（OKF 検査外）。wheel の格納や PEP 503 風 index 提供はまだ未実装（YAGNI）。
 >
 > **命名規約:** レイヤキー（CLI コマンド・manifest 上の概念名）は単数形 `bundle` だが、registry 上の
 > ディレクトリ名は他レイヤと揃えて複数形 **`bundles`**（`config.LAYERS["bundle"] = "bundles"`）。
 
 - **registry** … **1 つの layer = 1 つの registry**（あるフォーマットのパッケージ索引。`tools` / `bundles` /
-  将来 `python_packages` …）。物理的なストア（local / s3 …）の上に乗る。`Registry` クラスが 1 layer を、
+  `python_packages` / 将来 `datasets` …）。物理的なストア（local / s3 …）の上に乗る。`Registry` クラスが 1 layer を、
   `RegistryArray` が 1 namespace の全 registry を束ねる。catalog（成果物の構造＝論理）と registry（その置き場）は
   同じものの両面で、衝突ではない。
 - **catalog の閲覧口** … `juice all list`（全 registry を依存順に横断一覧）。

@@ -128,6 +128,12 @@ bundle を宣言順に `bundle → build`（docker）まで起動する（既定
 | workflow（常駐の協調） | `workflows:` | `steps[].bundle` を**常駐**させる定義（時間非依存）。`schedule` は持たない |
 | schedule（定期実行） | `schedules:` | `schedule`（cron）＋ `steps[]`。**いつ動かすか**を持つトリガ（scheduler の責務） |
 
+> **registry のみのレイヤ（manifest 非対象）:** `python_packages`（PyPI 様の registry。layer=registry）は
+> `juice.yaml` のキーを持たない＝`apply` の materialize/prune 対象ではない（langfuse の vendored workflow と同様、
+> registry に直接置く）。ただし `config.LAYERS` 登録済みで `all list` / `python_package list` / `registry verify`
+> （name=dir）/ `registry index` の横断対象。エントリは純 YAML `index.yml`（OKF 検査外）。wheel 格納や
+> PEP 503 風 index 提供はまだ未実装（YAGNI）。同じ枠で将来 `datasets` 等も同列に足せる。
+
 ### mcp_server: local（同梱）と remote（外部参照）（E002）
 
 `mcp_servers:` の 1 エントリは 2 形態のいずれか。消費側（subagent の `allow_tools` / bundle の

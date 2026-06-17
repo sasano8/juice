@@ -154,7 +154,15 @@ def test_main_all_list_prints_labels(capsys: pytest.CaptureFixture[str]) -> None
     # 全レイヤのラベル見出しが出る（見出しは registry ディレクトリ名＝複数形）
     assert "== tools ==" in out
     assert "== bundles ==" in out
+    assert "== python_packages ==" in out  # 実レイヤ化で横断対象に
     assert "mcp_weather-bot" in out
+
+
+def test_main_python_package_list_empty_is_ok(capsys: pytest.CaptureFixture[str]) -> None:
+    # python_packages は実レイヤだが同梱パッケージはまだ無い（構造のみ）。空でも rc 0。
+    rc = main(["python_package", "list"])
+    assert rc == 0
+    assert "(no python_packages)" in capsys.readouterr().err  # 空一覧は stderr に出る
 
 
 def test_main_instance_list(capsys: pytest.CaptureFixture[str]) -> None:
