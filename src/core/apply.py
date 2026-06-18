@@ -197,6 +197,16 @@ def _workflow(w: WorkflowSpec) -> str:
     meta["steps"] = [
         {"bundle": s.bundle, **({"input": dict(s.input)} if s.input else {})} for s in w.steps
     ]
+    if w.hooks:
+        # ライフサイクル・フック（配備前後に 1 回実行する bundle）も記録して round-trip させる。
+        meta["hooks"] = [
+            {
+                "event": h.event,
+                "bundle": h.bundle,
+                **({"input": dict(h.input)} if h.input else {}),
+            }
+            for h in w.hooks
+        ]
     return _frontmatter(meta, f"# {w.name}\n")
 
 

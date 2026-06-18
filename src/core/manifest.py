@@ -30,6 +30,10 @@ SUPPORTED_BIND_KINDS = ("mcp_server",)
 REMOTE_TRANSPORTS = ("streamable_http", "sse")
 DEFAULT_REMOTE_TRANSPORT = "streamable_http"
 
+# workflow のライフサイクル・フックが取りうるイベント（配備の前後）。
+# Helm のフック（pre-install / post-install …）と同型。実行は基盤（compose/k8s）に委譲。
+HOOK_EVENTS = ("pre_deploy", "post_deploy")
+
 
 class ManifestError(ValueError):
     """manifest の構造・参照が不正なときに投げる。"""
@@ -120,15 +124,30 @@ class WorkflowStep:
 
 
 @dataclass
+class HookSpec:
+    """ライフサイクル・フック：配備の前後（event）に bundle を 1 回実行する宣言。
+
+    Helm のフックと同型で、juice は実行せず**成果物に焼き込む**（compose の完了待ち one-shot /
+    k8s の Job）。実行は基盤（docker compose / k8s）が担う（「juice はワークロードを実行しない」）。
+    """
+
+    event: str  # HOOK_EVENTS（pre_deploy / post_deploy）
+    bundle: str
+    input: dict = field(default_factory=dict)
+
+
+@dataclass
 class WorkflowSpec:
     """協調層：複数 bundle を**常駐**させる定義（時間非依存）。
 
     「何を・どう動かすか」だけを持つ。「いつ定期実行するか」は別概念 [ScheduleSpec] の責務
     （定義とトリガの分離。k8s の Job↔CronJob、Argo の WorkflowTemplate↔CronWorkflow と同型）。
+    配備の前後に 1 回だけ動かしたい bundle は [HookSpec]（`hooks`）で宣言する。
     """
 
     name: str
     steps: list[WorkflowStep] = field(default_factory=list)
+    hooks: list[HookSpec] = field(default_factory=list)
     version: str | None = None
 
 
@@ -341,11 +360,37 @@ def _parse_instance(item: dict) -> InstanceSpec:
 def _parse_workflow(item: dict) -> WorkflowSpec:
     name = _require_name(item, "workflows")
     steps = [_parse_step(s, name, "workflow") for s in _sub_items(item, "steps", "workflows", name)]
+    hooks = [_parse_hook(h, name) for h in _sub_items(item, "hooks", "workflows", name)]
     return WorkflowSpec(
         name=name,
         steps=steps,
+        hooks=hooks,
         version=_opt_version(item, "workflows", name),
     )
+
+
+def _parse_hook(item: dict, owner: str) -> HookSpec:
+    where = f"workflow '{owner}' の hooks[]"
+    if not isinstance(item, dict):
+        raise ManifestError(f"{where} の各要素はマッピングである必要があります")
+    event = item.get("event")
+    if not event or not isinstance(event, str):
+        raise ManifestError(f"{where} に event（{' / '.join(HOOK_EVENTS)}）が必要です")
+    if event not in HOOK_EVENTS:
+        raise ManifestError(
+            f"{where} の event '{event}' は未対応です（対応: {', '.join(HOOK_EVENTS)}）"
+        )
+    bundled = item.get("bundle")
+    if not bundled or not isinstance(bundled, str):
+        raise ManifestError(f"{where}（event={event}）に bundle（文字列）が必要です")
+    raw_input = item.get("input")
+    if raw_input is None:
+        raw_input = {}
+    elif not isinstance(raw_input, dict):
+        raise ManifestError(
+            f"{where} '{bundled}' の input はマッピングが必要です（got {type(raw_input).__name__}）"
+        )
+    return HookSpec(event=event, bundle=bundled, input=raw_input)
 
 
 def _parse_schedule(item: dict) -> ScheduleSpec:
@@ -431,6 +476,12 @@ def _validate(m: Manifest) -> None:
         for step in wf.steps:
             if step.bundle not in bundles:
                 raise ManifestError(f"workflow '{wf.name}': 未定義の bundle を参照: {step.bundle}")
+        for hook in wf.hooks:
+            if hook.bundle not in bundles:
+                raise ManifestError(
+                    f"workflow '{wf.name}' の hook（{hook.event}）: "
+                    f"未定義の bundle を参照: {hook.bundle}"
+                )
 
     for sch in m.schedules:
         for step in sch.steps:

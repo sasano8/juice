@@ -233,6 +233,16 @@ flowchart TB
 > **step 協調の現状:** workflow/compose の `depends_on` は compose の意味での**起動順**にすぎず、「完了待ち」
 > ではない。pipeline 的な完了待ち・データ受け渡し・DAG（直列でなく分岐）・実起動（`up`/`kubectl apply`）・
 > スケジューラ稼働は次段階（YAGNI）。compose 以外（k8s / schedule）の step は独立リソースのまま。
+>
+> **ライフサイクル・フック（`workflows[].hooks`）:** 配備の前後に bundle を **1 回だけ**走らせる宣言
+> （Helm のフックと同型）。`{event: pre_deploy|post_deploy, bundle, input?}`。juice は実行せず**成果物に焼き込む**:
+> - **compose** … one-shot service（`restart: "no"`、label `juice.hook`）。**pre_deploy** は先頭 step が
+>   `depends_on: {condition: service_completed_successfully}` で待つ（compose が真に完了待ちを保証できる唯一の経路）。
+>   **post_deploy** は末尾 step の起動後（`service_started`）に走る。
+> - **k8s** … 各フックを **Job**（`restartPolicy: OnFailure`）に。k8s には depends_on 相当が無いので
+>   **順序は static manifest だけでは保証されない**（Helm hook / ArgoCD sync-wave 等で別途。`juice.hook` ラベルが目印）。
+>
+> `manifest.validate` は hook.bundle の参照存在も検査する。フックと step は 1 回の命名で通すため service 名が衝突しない。
 
 > **スケジューラの 2 ターゲット（分類）:** 「何を定期実行するか」で 2 種に分かれる。
 > - **(A) ワークロード・ジョブ**（データプレーン）… デプロイ済みコンテナを定期実行する。**`schedules:` がこれ**

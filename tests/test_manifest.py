@@ -479,3 +479,74 @@ def test_workflow_duplicate_name_errors():
     )
     with pytest.raises(ManifestError, match="重複した name"):
         parse_manifest(text)
+
+
+# --- workflow lifecycle hooks ------------------------------------------------
+
+_WORKFLOW_HOOKS = """\
+apiVersion: juice/v1
+bundles:
+  - name: bot
+  - name: migrate
+  - name: smoke
+workflows:
+  - name: svc
+    hooks:
+      - event: pre_deploy
+        bundle: migrate
+        input: {DB_URL: x}
+      - event: post_deploy
+        bundle: smoke
+    steps:
+      - bundle: bot
+"""
+
+
+def test_parse_workflow_hooks():
+    m = parse_manifest(_WORKFLOW_HOOKS)
+    wf = m.workflows[0]
+    assert len(wf.hooks) == 2
+    pre = wf.hooks[0]
+    assert pre.event == "pre_deploy"
+    assert pre.bundle == "migrate"
+    assert pre.input == {"DB_URL": "x"}
+    assert wf.hooks[1].event == "post_deploy"
+    assert wf.hooks[1].bundle == "smoke"
+
+
+def test_workflow_without_hooks_defaults_empty():
+    m = parse_manifest(_WORKFLOW)
+    assert m.workflows[0].hooks == []
+
+
+def test_hook_requires_event():
+    text = (
+        "apiVersion: juice/v1\nbundles:\n  - name: b\n"
+        "workflows:\n  - name: w\n    hooks:\n      - bundle: b\n"
+    )
+    with pytest.raises(ManifestError, match="event"):
+        parse_manifest(text)
+
+
+def test_hook_unknown_event_errors():
+    text = (
+        "apiVersion: juice/v1\nbundles:\n  - name: b\n"
+        "workflows:\n  - name: w\n    hooks:\n      - event: mid_deploy\n        bundle: b\n"
+    )
+    with pytest.raises(ManifestError, match="event 'mid_deploy' は未対応"):
+        parse_manifest(text)
+
+
+def test_hook_requires_bundle():
+    text = "apiVersion: juice/v1\nworkflows:\n  - name: w\n    hooks:\n      - event: pre_deploy\n"
+    with pytest.raises(ManifestError, match="bundle（文字列）が必要"):
+        parse_manifest(text)
+
+
+def test_hook_unknown_bundle_reference():
+    text = (
+        "apiVersion: juice/v1\nworkflows:\n  - name: w\n"
+        "    hooks:\n      - event: pre_deploy\n        bundle: ghost\n"
+    )
+    with pytest.raises(ManifestError, match="未定義の bundle"):
+        parse_manifest(text)

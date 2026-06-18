@@ -119,15 +119,19 @@ def _image(bundle: BundleSpec) -> str:
     return f"{base}:{bundle.version}" if bundle.version else base
 
 
-def _named_steps(steps: list):
-    """(service 名, step) を決定的に列挙する。同一 bundle の複数 step は連番で衝突回避。"""
+def _named(items: list):
+    """(service 名, item) を決定的に列挙する。同一 bundle の複数 item は連番で衝突回避。
+
+    item は `.bundle` を持つもの（WorkflowStep / ScheduleSpec の step / HookSpec）なら何でもよい。
+    フックと step を 1 回の列挙で通せば、両者の service 名が衝突しない。
+    """
     used: dict[str, int] = {}
-    for step in steps:
-        svc = step.bundle
+    for item in items:
+        svc = item.bundle
         used[svc] = used.get(svc, 0) + 1
         if used[svc] > 1:
             svc = f"{svc}-{used[svc]}"
-        yield svc, step
+        yield svc, item
 
 
 def _env_list(step_input: dict) -> list[dict]:
@@ -145,6 +149,13 @@ def _container(svc: str, bundle: BundleSpec, step_input: dict) -> dict:
 # --- workflow（常駐サービス群） -------------------------------------------------
 
 
+def _split_hooks(workflow: WorkflowSpec) -> tuple[list, list]:
+    """workflow.hooks を (pre_deploy, post_deploy) の 2 リストに宣言順で分ける。"""
+    pre = [h for h in workflow.hooks if h.event == "pre_deploy"]
+    post = [h for h in workflow.hooks if h.event == "post_deploy"]
+    return pre, post
+
+
 def build_compose(manifest: Manifest, workflow: WorkflowSpec) -> dict:
     """workflow を docker-compose（v2）の dict へ決定的に変換する（常駐 service）。
 
@@ -152,27 +163,82 @@ def build_compose(manifest: Manifest, workflow: WorkflowSpec) -> dict:
     これは compose の意味での**起動順**であって「完了待ち」ではない（pipeline 的な完了待ち・
     データ受け渡しは別概念）。順序モデルは直列のみ（DAG は YAGNI）。単一 step には付かない。
     k8s（build_k8s）には depends_on 相当が無いので**順序を持たない**（Argo 等で別途）。
+
+    ライフサイクル・フック（Helm 流）は one-shot service（`restart: "no"`）として焼き込む:
+    - **pre_deploy** … 先頭 step が `condition: service_completed_successfully` で依存
+      （= フックが**完了してから**本体が起動）。compose が真に完了待ちを保証できる唯一の経路。
+    - **post_deploy** … 末尾 step が起動（`service_started`）してからフックが走る。
     """
     bundles = {b.name: b for b in manifest.bundles}
+    pre, post = _split_hooks(workflow)
+    # pre フック → steps → post フック を 1 回で命名し、service 名の衝突を防ぐ。
+    named = list(_named([*pre, *workflow.steps, *post]))
+    n_pre, n_step = len(pre), len(workflow.steps)
+    pre_named = named[:n_pre]
+    step_named = named[n_pre : n_pre + n_step]
+    post_named = named[n_pre + n_step :]
+
     services: dict = {}
+    for svc, hook in pre_named:
+        services[svc] = _compose_hook_service(
+            bundles[hook.bundle], hook, workflow.name, "pre_deploy"
+        )
+
     prev: str | None = None
-    for svc, step in _named_steps(workflow.steps):
+    last_step: str | None = None
+    for i, (svc, step) in enumerate(step_named):
         service: dict = {"image": _image(bundles[step.bundle]), "restart": "unless-stopped"}
         if step.input:
             service["environment"] = {k: str(v) for k, v in step.input.items()}
-        if prev is not None:
-            service["depends_on"] = [prev]  # 宣言順の直列起動（直前の service に依存）
+        if i == 0 and pre_named:
+            # 先頭 step は pre_deploy フックの**完了**を待つ（long 構文）。
+            service["depends_on"] = {
+                hsvc: {"condition": "service_completed_successfully"} for hsvc, _ in pre_named
+            }
+        elif prev is not None:
+            service["depends_on"] = [prev]  # 宣言順の直列起動（直前の service。短縮構文）
         service["labels"] = {"juice.workflow": workflow.name}
         services[svc] = service
+        last_step = svc
         prev = svc
+
+    anchor = last_step  # post フックが起動を待つ先（step が無ければ pre フックに係る）
+    if anchor is None and pre_named:
+        anchor = pre_named[-1][0]
+    for svc, hook in post_named:
+        service = _compose_hook_service(bundles[hook.bundle], hook, workflow.name, "post_deploy")
+        if anchor is not None:
+            service["depends_on"] = {anchor: {"condition": "service_started"}}
+        services[svc] = service
     return {"name": workflow.name, "services": services}
 
 
+def _compose_hook_service(bundle: BundleSpec, hook, workflow_name: str, event: str) -> dict:
+    """ライフサイクル・フックを compose の one-shot service（自動再起動しない）にする。"""
+    service: dict = {"image": _image(bundle), "restart": "no"}
+    if hook.input:
+        service["environment"] = {k: str(v) for k, v in hook.input.items()}
+    service["labels"] = {"juice.workflow": workflow_name, "juice.hook": event}
+    return service
+
+
 def build_k8s(manifest: Manifest, workflow: WorkflowSpec) -> list[dict]:
-    """workflow を k8s Deployment（複数リソース）へ決定的に変換する（常駐 replicas:1）。"""
+    """workflow を k8s リソース（複数）へ決定的に変換する（常駐 replicas:1）。
+
+    ライフサイクル・フックは **Job**（`restartPolicy: OnFailure`）として pre→Deployment→post の
+    宣言順で出す。ただし k8s には depends_on 相当が無く、この static manifest だけでは
+    **順序は保証されない**（Helm/ArgoCD の hook/sync-wave 等で別途。`juice.hook` ラベルが目印）。
+    """
     bundles = {b.name: b for b in manifest.bundles}
+    pre, post = _split_hooks(workflow)
+    named = list(_named([*pre, *workflow.steps, *post]))
+    n_pre, n_step = len(pre), len(workflow.steps)
     resources: list[dict] = []
-    for svc, step in _named_steps(workflow.steps):
+    for svc, hook in named[:n_pre]:
+        resources.append(
+            _k8s_hook_job(svc, bundles[hook.bundle], hook, workflow.name, "pre_deploy")
+        )
+    for svc, step in named[n_pre : n_pre + n_step]:
         pod_labels = {"app": svc, "juice.workflow": workflow.name}
         container = _container(svc, bundles[step.bundle], step.input)
         resources.append(
@@ -193,7 +259,31 @@ def build_k8s(manifest: Manifest, workflow: WorkflowSpec) -> list[dict]:
                 },
             }
         )
+    for svc, hook in named[n_pre + n_step :]:
+        resources.append(
+            _k8s_hook_job(svc, bundles[hook.bundle], hook, workflow.name, "post_deploy")
+        )
     return resources
+
+
+def _k8s_hook_job(svc: str, bundle: BundleSpec, hook, workflow_name: str, event: str) -> dict:
+    """ライフサイクル・フックを k8s Job にする（1 回実行。順序は外部基盤に委ねる）。"""
+    labels = {"juice.workflow": workflow_name, "juice.hook": event}
+    pod_labels = {"app": svc, **labels}
+    return {
+        "apiVersion": "batch/v1",
+        "kind": "Job",
+        "metadata": {"name": f"{workflow_name}-{svc}", "labels": labels},
+        "spec": {
+            "template": {
+                "metadata": {"labels": pod_labels},
+                "spec": {
+                    "restartPolicy": "OnFailure",
+                    "containers": [_container(svc, bundle, hook.input)],
+                },
+            }
+        },
+    }
 
 
 # --- schedule（定期実行のトリガ） -----------------------------------------------
@@ -207,7 +297,7 @@ def build_schedule_compose(manifest: Manifest, schedule: ScheduleSpec) -> dict:
     """
     bundles = {b.name: b for b in manifest.bundles}
     services: dict = {}
-    for svc, step in _named_steps(schedule.steps):
+    for svc, step in _named(schedule.steps):
         service: dict = {"image": _image(bundles[step.bundle]), "restart": "no"}
         if step.input:
             service["environment"] = {k: str(v) for k, v in step.input.items()}
@@ -221,7 +311,7 @@ def build_schedule_k8s(manifest: Manifest, schedule: ScheduleSpec) -> list[dict]
     """schedule を k8s CronJob（複数リソース）へ決定的に変換する。"""
     bundles = {b.name: b for b in manifest.bundles}
     resources: list[dict] = []
-    for svc, step in _named_steps(schedule.steps):
+    for svc, step in _named(schedule.steps):
         pod_labels = {"app": svc, "juice.scheduled": schedule.name}
         resources.append(
             {
@@ -311,7 +401,9 @@ def write_deployment(
     workflow = find_workflow(manifest, workflow_name)
     filename, text = build_deployment(manifest, workflow, target)
     res = _write(out_dir, workflow.name, filename, text, target, len(workflow.steps))
-    res["closure"] = dependency_closure(manifest, workflow.steps)
+    # フックの bundle も依存閉包に含める（--build-deps が image を用意できるよう）。
+    res["closure"] = dependency_closure(manifest, [*workflow.steps, *workflow.hooks])
+    res["hooks"] = len(workflow.hooks)
     return res
 
 

@@ -80,8 +80,11 @@ def workflow_build(name: str, file: str, out: str, target: str, build_deps: bool
     if result.get("vendored"):
         print(f"deployed (vendored): {result['out']} ({result['services']} services, 終端)")
     else:
+        hooks = result.get("hooks", 0)
+        hook_note = f", {hooks} hooks" if hooks else ""
         print(
-            f"deployed: {result['out']} (target={result['target']}, {result['services']} services)"
+            f"deployed: {result['out']} (target={result['target']}, "
+            f"{result['services']} services{hook_note})"
         )
     _print_closure(result["closure"])
     return _build_deps(result["closure"]) if build_deps else 0

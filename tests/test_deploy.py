@@ -173,6 +173,86 @@ def test_workflow_k8s_is_deployment():
     assert dep["metadata"]["name"] == "live-bots-mcp_weather-bot"
 
 
+# --- workflow lifecycle hooks（Helm 流・成果物に焼き込む） -----------------------
+
+_HOOKS = """\
+apiVersion: juice/v1
+bundles:
+  - name: bot
+  - name: migrate
+  - name: smoke
+workflows:
+  - name: svc
+    hooks:
+      - event: pre_deploy
+        bundle: migrate
+        input: {DB_URL: x}
+      - event: post_deploy
+        bundle: smoke
+    steps:
+      - bundle: bot
+"""
+
+
+def _hooks_manifest():
+    return parse_manifest(_HOOKS)
+
+
+def test_compose_pre_deploy_hook_gates_first_step():
+    m = _hooks_manifest()
+    services = build_compose(m, find_workflow(m, "svc"))["services"]
+    # pre フックは one-shot（自動再起動しない）＋ juice.hook ラベル
+    assert services["migrate"]["restart"] == "no"
+    assert services["migrate"]["labels"]["juice.hook"] == "pre_deploy"
+    assert services["migrate"]["environment"] == {"DB_URL": "x"}
+    # 先頭 step は pre フックの「完了」を待つ（long 構文）
+    assert services["bot"]["depends_on"] == {
+        "migrate": {"condition": "service_completed_successfully"}
+    }
+
+
+def test_compose_post_deploy_hook_waits_for_step():
+    m = _hooks_manifest()
+    services = build_compose(m, find_workflow(m, "svc"))["services"]
+    assert services["smoke"]["restart"] == "no"
+    assert services["smoke"]["labels"]["juice.hook"] == "post_deploy"
+    # post フックは本体 step の起動後に走る
+    assert services["smoke"]["depends_on"] == {"bot": {"condition": "service_started"}}
+
+
+def test_compose_output_order_pre_steps_post():
+    m = _hooks_manifest()
+    services = build_compose(m, find_workflow(m, "svc"))["services"]
+    assert list(services) == ["migrate", "bot", "smoke"]
+
+
+def test_k8s_hooks_are_jobs_around_deployment():
+    m = _hooks_manifest()
+    docs = build_k8s(m, find_workflow(m, "svc"))
+    assert [(d["kind"], d["metadata"]["name"]) for d in docs] == [
+        ("Job", "svc-migrate"),
+        ("Deployment", "svc-bot"),
+        ("Job", "svc-smoke"),
+    ]
+    pre = docs[0]
+    assert pre["metadata"]["labels"]["juice.hook"] == "pre_deploy"
+    assert pre["spec"]["template"]["spec"]["restartPolicy"] == "OnFailure"
+
+
+def test_no_hooks_compose_unchanged():
+    # フックが無ければ従来どおり（depends_on は短縮リスト、hook ラベル無し）。
+    services = build_compose(_manifest(), find_workflow(_manifest(), "live-bots"))["services"]
+    assert services["news-bot"]["depends_on"] == ["mcp_weather-bot"]
+    assert "juice.hook" not in services["mcp_weather-bot"]["labels"]
+
+
+def test_write_deployment_closure_includes_hook_bundles(tmp_path: Path):
+    res = write_deployment(_hooks_manifest(), "svc", out_dir=str(tmp_path))
+    assert res["hooks"] == 2
+    # フックの bundle も build 対象（依存閉包）に含まれる（--build-deps 用）。
+    assert set(res["closure"]["bundle"]) == {"bot", "migrate", "smoke"}
+
+
 # --- vendored workflow（終端：外部 compose をそのまま同梱） ----------------------
 
 
