@@ -1,13 +1,15 @@
-"""shoudou_storage のテスト（パッケージ同梱・juice の test 群とは分離）。
+"""shoudou_storage のテスト（juice の test 群とは分離した同階層ディレクトリ）。
 
-ストレージは将来 juice の外のライブラリとして抽出する想定のため、テストもパッケージ配下に
-置いて一緒に持ち出せるようにしている。juice の `make test`（testpaths=["tests"]）の対象外。
-ここを直接 `pytest shoudou_storage/tests/` で回す。
+ストレージは将来 juice の外のライブラリとして抽出する想定のため、テストを `shoudou_storage`
+パッケージと同階層の `tests_storage/` に置く（src/＋tests/ と同型。パッケージ dir はソースのみ＝
+wheel にもテストが入らない）。juice の `make test`（testpaths=["tests"]）の対象外。
+ここを直接 `pytest tests_storage/` で回す。
 """
 
 from __future__ import annotations
 
 import asyncio
+import io
 from pathlib import Path
 
 import pytest
@@ -17,6 +19,8 @@ from shoudou_storage import (
     KeyValueFileStore,
     LocalFileStore,
     LocalKeyValueStore,
+    NatsFileStore,
+    S3FileStore,
     SafeFileStore,
     SafeKeyValueStore,
     UnsafePathError,
@@ -156,3 +160,127 @@ def test_local_kvs_path_fixed_at_init(tmp_path: Path, monkeypatch: pytest.Monkey
     monkeypatch.chdir(other)
     assert asyncio.run(store.get("k")) == b"v"
     assert (tmp_path / "store" / "k").read_bytes() == b"v"
+
+
+# ── S3 streaming file store（fake S3 client で分割ロジックを検証） ──
+
+
+class _FakeBody:
+    def __init__(self, data: bytes) -> None:
+        self._buf = io.BytesIO(data)
+
+    async def read(self, size: int = -1) -> bytes:
+        return self._buf.read() if size is None or size < 0 else self._buf.read(size)
+
+    def close(self) -> None:
+        self._buf.close()
+
+
+class _FakeS3:
+    """S3FileStore を駆動する最小のインメモリ fake（async client 兼 context manager）。"""
+
+    def __init__(self) -> None:
+        self.objects: dict[str, bytes] = {}
+        self._uploads: dict[str, dict] = {}
+        self._uid = 0
+
+    async def __aenter__(self) -> _FakeS3:
+        return self
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+    async def create_multipart_upload(self, Bucket: str, Key: str) -> dict:
+        self._uid += 1
+        uid = f"u{self._uid}"
+        self._uploads[uid] = {"key": Key, "parts": {}}
+        return {"UploadId": uid}
+
+    async def upload_part(self, Bucket, Key, PartNumber, UploadId, Body) -> dict:
+        self._uploads[UploadId]["parts"][PartNumber] = bytes(Body)
+        return {"ETag": f'"etag{PartNumber}"'}
+
+    async def complete_multipart_upload(self, Bucket, Key, UploadId, MultipartUpload) -> dict:
+        up = self._uploads.pop(UploadId)
+        order = [p["PartNumber"] for p in MultipartUpload["Parts"]]
+        self.objects[Key] = b"".join(up["parts"][n] for n in order)
+        return {}
+
+    async def put_object(self, Bucket, Key, Body) -> dict:
+        self.objects[Key] = bytes(Body)
+        return {}
+
+    async def get_object(self, Bucket, Key) -> dict:
+        return {"Body": _FakeBody(self.objects[Key])}
+
+
+def test_s3_file_store_streams_multipart_write_and_read() -> None:
+    fake = _FakeS3()
+    store = S3FileStore("bucket", part_size=4)  # 小さなパートで分割を起こす
+    store._session = lambda: fake  # 接続を fake に差し替え
+
+    async def scenario() -> None:
+        # 11 バイトを part_size=4 で書く → パート分割（4,4,3）して multipart upload。
+        async with await store.open("k", "wb") as f:
+            await f.write(b"hello world")
+        assert fake.objects["k"] == b"hello world"
+        assert len(fake._uploads) == 0  # complete 済み
+
+        # ストリーム read（全体／chunk）。
+        async with await store.open("k", "rb") as f:
+            assert await f.read() == b"hello world"
+        async with await store.open("k", "rb") as f:
+            assert await f.read(5) == b"hello"
+            assert await f.read() == b" world"
+
+        # 空書き込みは空オブジェクトを put（multipart 0 パート不可）。
+        async with await store.open("empty", "wb") as f:
+            pass
+        assert fake.objects["empty"] == b""
+
+    asyncio.run(scenario())
+
+
+# ── NATS streaming file store（fake object store でチャンク配送を検証） ──
+
+
+class _FakeNatsObs:
+    """NatsFileStore を駆動する最小の fake object store（get は writeinto へチャンク write）。"""
+
+    def __init__(self) -> None:
+        self.objects: dict[str, bytes] = {}
+
+    async def put(self, name: str, data) -> None:
+        self.objects[name] = bytes(data)
+
+    async def get(self, name: str, writeinto) -> None:
+        data = self.objects[name]
+        # 4 バイトずつ writeinto.write へ（nats のチャンク配送を模倣）。
+        for i in range(0, len(data), 4):
+            writeinto.write(data[i : i + 4])
+
+
+def test_nats_file_store_streams_read_and_buffers_write() -> None:
+    store = NatsFileStore("nats://x", "bucket")
+    fake = _FakeNatsObs()
+
+    async def fake_get_obs() -> _FakeNatsObs:
+        return fake
+
+    store._get_obs = fake_get_obs  # 接続を fake に差し替え
+
+    async def scenario() -> None:
+        # write はバッファして close で put。
+        async with await store.open("k", "wb") as f:
+            await f.write(b"hello")
+            await f.write(b" world")
+        assert fake.objects["k"] == b"hello world"
+
+        # read は背景 get がチャンクを Queue へ流し、逐次引く（全体／chunk）。
+        async with await store.open("k", "rb") as f:
+            assert await f.read() == b"hello world"
+        async with await store.open("k", "rb") as f:
+            assert await f.read(5) == b"hello"
+            assert await f.read() == b" world"
+
+    asyncio.run(scenario())

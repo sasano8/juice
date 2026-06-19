@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import io
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -88,7 +90,9 @@ class LocalKeyValueStore:
 # ── S3-compatible ──
 
 
-class S3KeyValueStore:
+class _S3Base:
+    """S3 系ストアの共通接続部（bucket・認証・`_session`）。"""
+
     def __init__(
         self,
         bucket: str,
@@ -114,6 +118,8 @@ class S3KeyValueStore:
             aws_secret_access_key=self._secret_key,
         )
 
+
+class S3KeyValueStore(_S3Base):
     async def put(self, key: str, value: bytes) -> None:
         async with self._session() as client:
             await client.put_object(Bucket=self._bucket, Key=key, Body=value)
@@ -152,7 +158,9 @@ class S3KeyValueStore:
 # ── NATS JetStream Object Store ──
 
 
-class NatsObjectKeyValueStore:
+class _NatsBase:
+    """NATS object store の共通接続部（lazy connect の `_get_obs`）。"""
+
     def __init__(self, url: str, bucket: str) -> None:
         self._url = url
         self._bucket = bucket
@@ -172,6 +180,8 @@ class NatsObjectKeyValueStore:
                 self._obs = await js.create_object_store(self._bucket)
         return self._obs
 
+
+class NatsObjectKeyValueStore(_NatsBase):
     async def put(self, key: str, value: bytes) -> None:
         obs = await self._get_obs()
         await obs.put(key, value)
@@ -373,3 +383,267 @@ class KeyValueFileStore:
         if "w" in mode:
             return _KvWriteFileObject(self._store, filename)
         raise ValueError(f"unsupported mode for KeyValueFileStore: {mode!r}")
+
+
+# ── S3 streaming file store（真のストリーミング＝全体バッファしない） ──
+
+
+class _S3StreamReader:
+    """`get_object` のストリーム body を read で逐次読み出す（全体をメモリに載せない）。
+
+    body / client の接続は close まで開いたままにする（ストリームを跨いで読むため）。
+    """
+
+    def __init__(self, client_cm, client, body) -> None:
+        self._client_cm = client_cm
+        self._body = body
+
+    async def read(self, size: int = -1) -> bytes:
+        return await self._body.read() if size < 0 else await self._body.read(size)
+
+    async def write(self, data: bytes) -> int:
+        raise io.UnsupportedOperation("not writable")
+
+    async def close(self) -> None:
+        self._body.close()
+        await self._client_cm.__aexit__(None, None, None)
+
+    async def __aenter__(self) -> _S3StreamReader:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.close()
+
+
+class _S3MultipartWriter:
+    """書き込みを multipart upload でパート分割アップロードする（全体バッファしない）。
+
+    `part_size` ごとに upload_part し、close で残りを最終パート（5MB 未満可）として送って
+    complete する。1 バイトも書かれなければ空オブジェクトを単純 put する。
+    """
+
+    def __init__(self, base: _S3Base, key: str, part_size: int) -> None:
+        self._base = base
+        self._key = key
+        self._part_size = part_size
+        self._buf = bytearray()
+        self._parts: list[dict] = []
+        self._upload_id: str | None = None
+        self._client_cm = None
+        self._client = None
+        self._closed = False
+
+    async def read(self, size: int = -1) -> bytes:
+        raise io.UnsupportedOperation("not readable")
+
+    async def _start(self) -> None:
+        self._client_cm = self._base._session()
+        self._client = await self._client_cm.__aenter__()
+        resp = await self._client.create_multipart_upload(Bucket=self._base._bucket, Key=self._key)
+        self._upload_id = resp["UploadId"]
+
+    async def _flush(self, size: int) -> None:
+        chunk = bytes(self._buf[:size])
+        del self._buf[:size]
+        n = len(self._parts) + 1
+        resp = await self._client.upload_part(
+            Bucket=self._base._bucket,
+            Key=self._key,
+            PartNumber=n,
+            UploadId=self._upload_id,
+            Body=chunk,
+        )
+        self._parts.append({"PartNumber": n, "ETag": resp["ETag"]})
+
+    async def write(self, data: bytes) -> int:
+        if self._upload_id is None:
+            await self._start()
+        self._buf.extend(data)
+        while len(self._buf) >= self._part_size:
+            await self._flush(self._part_size)
+        return len(data)
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        if self._upload_id is None:
+            # 何も書かれていない → 空オブジェクトを単純 put（multipart は 0 パート不可）。
+            cm = self._base._session()
+            client = await cm.__aenter__()
+            try:
+                await client.put_object(Bucket=self._base._bucket, Key=self._key, Body=b"")
+            finally:
+                await cm.__aexit__(None, None, None)
+            return
+        try:
+            if self._buf:
+                await self._flush(len(self._buf))
+            await self._client.complete_multipart_upload(
+                Bucket=self._base._bucket,
+                Key=self._key,
+                UploadId=self._upload_id,
+                MultipartUpload={"Parts": self._parts},
+            )
+        finally:
+            await self._client_cm.__aexit__(None, None, None)
+
+    async def __aenter__(self) -> _S3MultipartWriter:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.close()
+
+
+class S3FileStore(_S3Base):
+    """S3 の真のストリーミング [FileStore]（read=body 逐次 / write=multipart）。
+
+    全体をメモリに載せる [KeyValueFileStore] と違い、大きなオブジェクトでも一定メモリで扱える。
+    `part_size` は multipart の 1 パートサイズ（実 S3 は最終パート以外 5MB 以上が必要。既定 8MiB）。
+    """
+
+    def __init__(
+        self,
+        bucket: str,
+        endpoint_url: str = "",
+        region: str = "us-east-1",
+        access_key: str = "",
+        secret_key: str = "",
+        part_size: int = 8 * 1024 * 1024,
+    ) -> None:
+        super().__init__(bucket, endpoint_url, region, access_key, secret_key)
+        self._part_size = part_size
+
+    async def open(self, filename: str, mode: str = "rb") -> FileObject:
+        if "r" in mode:
+            cm = self._session()
+            client = await cm.__aenter__()
+            resp = await client.get_object(Bucket=self._bucket, Key=filename)
+            return _S3StreamReader(cm, client, resp["Body"])
+        if "w" in mode:
+            return _S3MultipartWriter(self, filename, self._part_size)
+        raise ValueError(f"unsupported mode for S3FileStore: {mode!r}")
+
+
+# ── NATS streaming file store ──
+
+
+class _QueueSink:
+    """NATS の `get(writeinto=...)` が呼ぶ sync な write 先。チャンクを Queue へ流す。"""
+
+    def __init__(self, queue: asyncio.Queue) -> None:
+        self._queue = queue
+
+    def write(self, chunk: bytes) -> int:
+        # get コルーチンと同じループ上から同期的に呼ばれる（put_nowait は同期で安全）。
+        self._queue.put_nowait(bytes(chunk))
+        return len(chunk)
+
+
+class _NatsStreamReader:
+    """背景の `get(writeinto=sink)` が Queue へ流すチャンクを read で逐次引く読み取り側。"""
+
+    _EOF = None
+
+    def __init__(self, queue: asyncio.Queue, task: asyncio.Future) -> None:
+        self._queue = queue
+        self._task = task
+        self._leftover = b""
+        self._eof = False
+
+    async def _pull(self) -> bool:
+        """次のチャンクを Queue から取り込む。EOF なら False。"""
+        if self._eof:
+            return False
+        chunk = await self._queue.get()
+        if chunk is self._EOF:
+            self._eof = True
+            return False
+        self._leftover += chunk
+        return True
+
+    async def read(self, size: int = -1) -> bytes:
+        if size is None or size < 0:
+            while await self._pull():
+                pass
+            out, self._leftover = self._leftover, b""
+            return out
+        while len(self._leftover) < size and await self._pull():
+            pass
+        out, self._leftover = self._leftover[:size], self._leftover[size:]
+        return out
+
+    async def write(self, data: bytes) -> int:
+        raise io.UnsupportedOperation("not writable")
+
+    async def close(self) -> None:
+        if not self._task.done():
+            self._task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._task
+
+    async def __aenter__(self) -> _NatsStreamReader:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.close()
+
+
+class _NatsBufferedWriter:
+    """書き込みをバッファし、close 時に `put` する書き込み [FileObject]。
+
+    nats-py の put は readable から sync 読みするため、async の write を pull させるには
+    スレッド/パイプが要る。単一ループでは破綻するので、ここではバッファして close で put する
+    （nats が wire 上でチャンク化して送る）。
+    """
+
+    def __init__(self, base: _NatsBase, name: str) -> None:
+        self._base = base
+        self._name = name
+        self._buf = io.BytesIO()
+        self._closed = False
+
+    async def read(self, size: int = -1) -> bytes:
+        raise io.UnsupportedOperation("not readable")
+
+    async def write(self, data: bytes) -> int:
+        return self._buf.write(data)
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        obs = await self._base._get_obs()
+        await obs.put(self._name, self._buf.getvalue())
+        self._buf.close()
+
+    async def __aenter__(self) -> _NatsBufferedWriter:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.close()
+
+
+class NatsFileStore(_NatsBase):
+    """NATS object store の [FileStore]（read=チャンク逐次配送 / write=close で put）。
+
+    read は `get(writeinto=sink)` を背景タスクで走らせ、チャンクを逐次 read で引く（最初の
+    バイトまでのレイテンシが低い）。nats writeinto は sync ＝ backpressure を掛けられないため、
+    メモリは厳密には bounded でない（best-effort）。write は単一ループの制約上バッファして put。
+    """
+
+    async def open(self, filename: str, mode: str = "rb") -> FileObject:
+        if "r" in mode:
+            queue: asyncio.Queue = asyncio.Queue()
+            task = asyncio.ensure_future(self._pump(filename, queue))
+            return _NatsStreamReader(queue, task)
+        if "w" in mode:
+            return _NatsBufferedWriter(self, filename)
+        raise ValueError(f"unsupported mode for NatsFileStore: {mode!r}")
+
+    async def _pump(self, name: str, queue: asyncio.Queue) -> None:
+        obs = await self._get_obs()
+        try:
+            await obs.get(name, writeinto=_QueueSink(queue))
+        finally:
+            queue.put_nowait(None)  # EOF sentinel

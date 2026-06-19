@@ -23,7 +23,9 @@ from .async_storage import (
     LocalFileObject,
     LocalFileStore,
     LocalKeyValueStore,
+    NatsFileStore,
     NatsObjectKeyValueStore,
+    S3FileStore,
     S3KeyValueStore,
     create_key_value_store,
 )
@@ -53,6 +55,8 @@ __all__ = [
     "LocalFileStore",
     "LocalFileObject",
     "KeyValueFileStore",
+    "S3FileStore",
+    "NatsFileStore",
     "SyncFileStore",
     "SyncFileObject",
 ]

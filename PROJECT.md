@@ -286,10 +286,21 @@ Makefile にはサンプル（`mcp_weather-bot`）の **デプロイフロー** 
 
 ### 直前の作業（Just Done） — 最終更新: 2026-06-20
 
+- **storage に真のストリーミング FileStore（S3 / NATS）を追加＋テスト置き場を `tests_storage/` へ移設。**
+  前項の redesign に続けて、全体バッファの `KeyValueFileStore` に対し**一定/低レイテンシ**のストリーミング実装を足した。
+  - **`S3FileStore`**（真のストリーミング）：read=`get_object` の body を `read(size)` で逐次／write=**multipart upload**
+    （`part_size` ごと upload_part、close で残りを最終パート＋complete、空は put_object）。接続部は `_S3Base` に共通化。
+  - **`NatsFileStore`**：read=`get(writeinto=sink)` を背景タスク化し `asyncio.Queue` 経由で逐次配送／write=バッファして
+    close で put（nats の sync-IO モデル＝async-write を pull できないため。backpressure 不可でメモリは best-effort）。`_NatsBase` 共通化。
+  - **テスト移設:** `shoudou_storage/tests/` → 最上位 **`tests_storage/`**（`shoudou_storage`/`tests` と同階層＝src/＋tests/ と同型。
+    パッケージ dir はソースのみ＝wheel にテストが入らない。`pytest tests_storage/` で実行）。S3/NATS はインメモリ fake で分割・配送ロジックを検証。
+  - **結果:** `pytest tests_storage/ -W error` 緑（20）、juice `make check` 緑（221）。実 S3/minio・実 NATS 疎通は未検証（fake 担保・follow-up）。
+  - **関連 commit:** 本コミット（S3/NATS streaming FileStore＋テスト移設）。
+
 - **shoudou_storage を「2 ストア抽象 × async/sync/bridge」へ再設計（ユーザー対話で逐次決定）。** 単一 `__init__.py`
   だった shoudou_storage を、将来別ライブラリへ抽出する前提でモジュール分割し、ストア抽象を整理した。
   src からは未 import（E006 結線は保留のまま・juice 本体の挙動は不変）。テストは**パッケージ同梱**
-  （`shoudou_storage/tests/`、juice の `testpaths=["tests"]` 外＝抽出時に一緒に持ち出せる。`pytest shoudou_storage/tests/` で実行）。
+  （`tests_storage/`＝`shoudou_storage` と同階層〔src/＋tests/ と同型〕。juice の `testpaths=["tests"]` 外＝抽出時に一緒に持ち出せる。`pytest tests_storage/` で実行）。
   - **クリーンアップ:** `create_file_store` のベタ書き `/app/data` を撤去（`local` は `local_dir` 必須化、未知 backend は
     `ValueError`）。`create_file_store`→`create_key_value_store` に改名。
   - **モジュール分割:** `async_storage`（一次実装）/ `sync_storage`（同期 IF）/ `async_to_sync_storage`（橋渡し）/
@@ -304,7 +315,7 @@ Makefile にはサンプル（`mcp_weather-bot`）の **デプロイフロー** 
     `SyncKeyValueStore`/`SyncFileStore`/`SyncFileObject`。
   - **安全パス:** `validate_safe_path`（POSIX 相対のみ許可。絶対/`..`/バックスラッシュ/NUL/空を弾く・`UnsafePathError`）＋
     同 IF を被せる `SafeKeyValueStore`/`SafeFileStore`（key/filename を検証してから委譲＝各メソッド明示定義で型も引き継ぐ）。
-  - **結果:** `pytest shoudou_storage/tests/ -W error` 緑（18）、juice `make check` 緑（221、変化なし）。
+  - **結果:** `pytest tests_storage/ -W error` 緑、juice `make check` 緑（221、変化なし）。
   - **E006 の経緯:** 当初 E006 で registry を shoudou backing するため FileStore に `walk`/`delete` を足す案を出したが、
     **shoudou を juice 都合で拡張しない**方針（pristine 維持・抽出予定）でユーザーが却下。E006 は保留のまま、本サイクルは
     storage パッケージ自体の抽象整備に充てた。詳細は「課題メモ: E006」。
