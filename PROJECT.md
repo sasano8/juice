@@ -286,6 +286,19 @@ Makefile にはサンプル（`mcp_weather-bot`）の **デプロイフロー** 
 
 ### 直前の作業（Just Done） — 最終更新: 2026-06-20
 
+- **storage の KeyValueStore に CRUD/保守操作を拡充（delete / cp / mv / vacuum）＋ Local 書き込みを原子的に。**
+  - **delete**（Protocol＋全 backend＋Safe＋sync＋bridge）：Local は unlink のみ（**親ディレクトリは残す**＝ユーザー決定）、
+    S3=delete_object、NATS=obs.delete。無いキーは無視。
+  - **cp / mv**（Protocol に追加＝ユニバーサル操作）：汎用は `_kv_copy`/`_kv_move`（get→put／+delete）。Local の **mv は
+    `os.replace`＝原子的 rename**、S3 cp は `copy_object`（サーバ側）。src 無しは `FileNotFoundError`。Safe は src/dst 両方検証。
+  - **vacuum**（`LocalKeyValueStore` 固有・Protocol 非搭載）：空ディレクトリを bottom-up に再帰削除。delete と分離した保守操作
+    （空ディレクトリは Local FS 特有＝s3/nats はフラットで概念なし、のため抽象 IF は汚さない）。
+  - **アトミック書き込み**：`_atomic_write_bytes`（temp+`os.replace`）で `LocalKeyValueStore.put` を all-or-nothing 化。
+    `LocalFileStore.open("wb")` は `_LocalAtomicWriter`（一時ファイルへ書き、正常 close でのみ確定・例外時は破棄）。
+    **S3/NATS は元々アトミック**（Put/multipart complete・put 完了まで不可視）なので追加対応不要。
+  - **結果:** `pytest tests_storage/ -W error` 緑（25）、juice `make check` 緑（221）。S3/NATS は fake で検証（実機 follow-up）。
+  - **関連 commit:** 本コミット（delete/cp/mv/vacuum＋Local 原子的書き込み）。
+
 - **storage に真のストリーミング FileStore（S3 / NATS）を追加＋テスト置き場を `tests_storage/` へ移設。**
   前項の redesign に続けて、全体バッファの `KeyValueFileStore` に対し**一定/低レイテンシ**のストリーミング実装を足した。
   - **`S3FileStore`**（真のストリーミング）：read=`get_object` の body を `read(size)` で逐次／write=**multipart upload**

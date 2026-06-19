@@ -48,6 +48,15 @@ class AsyncToSyncKeyValueStore:
     def exists(self, key: str) -> bool:
         return self._run(self._store.exists(key))
 
+    def delete(self, key: str) -> None:
+        self._run(self._store.delete(key))
+
+    def cp(self, src: str, dst: str) -> None:
+        self._run(self._store.cp(src, dst))
+
+    def mv(self, src: str, dst: str) -> None:
+        self._run(self._store.mv(src, dst))
+
     def close(self) -> None:
         """保持しているイベントループを閉じる（async ジェネレータを finalize してから）。"""
         try:

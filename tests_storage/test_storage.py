@@ -40,6 +40,8 @@ def test_async_to_sync_kvs_roundtrip(tmp_path: Path) -> None:
         # iter は async ジェネレータを同期イテレータとして流す（名前降順）。
         assert [i["filename"] for i in store.iter()] == ["b.txt", "a.txt"]
         assert [i["filename"] for i in store.list(limit=1)] == ["b.txt"]
+        store.delete("a.txt")
+        assert store.exists("a.txt") is False
 
 
 @pytest.mark.parametrize("good", ["a.txt", "dir/b.txt", "a/b/c.bin"])
@@ -102,6 +104,92 @@ def test_local_kvs_put_creates_parent_dirs(tmp_path: Path) -> None:
     # '/' を含むキーは親ディレクトリを作って格納できる（s3/nats のフラットキー規約に整合）。
     asyncio.run(store.put("a/b/c.bin", b"data"))
     assert asyncio.run(store.get("a/b/c.bin")) == b"data"
+
+
+def test_local_kvs_delete_removes_file_keeps_dirs(tmp_path: Path) -> None:
+    store = LocalKeyValueStore(tmp_path)
+
+    async def scenario() -> None:
+        await store.put("a/b.txt", b"x")
+        assert await store.exists("a/b.txt")
+        await store.delete("a/b.txt")
+        assert not await store.exists("a/b.txt")
+        # ファイルだけ消す。親ディレクトリは残す。
+        assert (tmp_path / "a").is_dir()
+        # 無いキーの delete は無視（例外を投げない）。
+        await store.delete("missing")
+
+    asyncio.run(scenario())
+
+
+def test_local_kvs_vacuum_removes_empty_dirs(tmp_path: Path) -> None:
+    store = LocalKeyValueStore(tmp_path)
+
+    async def scenario() -> None:
+        await store.put("a/b/c.txt", b"x")
+        await store.put("keep/d.txt", b"y")
+        await store.delete("a/b/c.txt")  # a/b は空になるが delete は残す
+        assert (tmp_path / "a" / "b").is_dir()
+        await store.vacuum()
+        # ネストした空ディレクトリ（a, a/b）は畳まれ、中身のある keep は残る。
+        assert not (tmp_path / "a").exists()
+        assert (tmp_path / "keep").is_dir()
+
+    asyncio.run(scenario())
+
+
+def test_local_kvs_cp_and_mv(tmp_path: Path) -> None:
+    store = LocalKeyValueStore(tmp_path)
+
+    async def scenario() -> None:
+        await store.put("a.txt", b"hi")
+        # cp は src を残して dst へ複製（dst のサブディレクトリも作る）。
+        await store.cp("a.txt", "dir/b.txt")
+        assert await store.get("a.txt") == b"hi"
+        assert await store.get("dir/b.txt") == b"hi"
+        # mv は src を消して dst へ（原子的 rename）。
+        await store.mv("a.txt", "moved.txt")
+        assert not await store.exists("a.txt")
+        assert await store.get("moved.txt") == b"hi"
+        # 無い src はエラー。
+        with pytest.raises(FileNotFoundError):
+            await store.cp("missing", "x")
+        with pytest.raises(FileNotFoundError):
+            await store.mv("missing", "x")
+
+    asyncio.run(scenario())
+
+
+def test_local_kvs_put_is_atomic(tmp_path: Path) -> None:
+    store = LocalKeyValueStore(tmp_path)
+
+    async def scenario() -> None:
+        await store.put("k", b"v1")
+        await store.put("k", b"v2")  # 原子的に差し替え
+        assert await store.get("k") == b"v2"
+        # 一時ファイルの残骸が無い（最終ファイルだけ）。
+        assert [p.name for p in tmp_path.iterdir()] == ["k"]
+
+    asyncio.run(scenario())
+
+
+def test_local_file_store_write_is_atomic_on_error(tmp_path: Path) -> None:
+    store = LocalFileStore(tmp_path)
+
+    async def scenario() -> None:
+        async with await store.open("k", "wb") as f:
+            await f.write(b"old")
+        # 書き込み中に例外 → 確定せず、既存値（old）が保たれる。
+        with pytest.raises(RuntimeError):
+            async with await store.open("k", "wb") as f:
+                await f.write(b"new-partial")
+                raise RuntimeError("boom")
+        async with await store.open("k", "rb") as f:
+            assert await f.read() == b"old"
+        # 一時ファイルの残骸が無い。
+        assert [p.name for p in tmp_path.iterdir()] == ["k"]
+
+    asyncio.run(scenario())
 
 
 def test_local_kvs_iter_is_recursive(tmp_path: Path) -> None:

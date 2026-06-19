@@ -56,6 +56,15 @@ class SafeKeyValueStore:
     async def exists(self, key: str) -> bool:
         return await self._store.exists(validate_safe_path(key))
 
+    async def delete(self, key: str) -> None:
+        await self._store.delete(validate_safe_path(key))
+
+    async def cp(self, src: str, dst: str) -> None:
+        await self._store.cp(validate_safe_path(src), validate_safe_path(dst))
+
+    async def mv(self, src: str, dst: str) -> None:
+        await self._store.mv(validate_safe_path(src), validate_safe_path(dst))
+
 
 class SafeFileStore:
     """filename を [validate_safe_path] で検証してから委譲する [FileStore] ラッパ。"""

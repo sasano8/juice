@@ -15,6 +15,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import io
+import os
+import tempfile
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import BinaryIO, Protocol, TypedDict
@@ -34,6 +36,9 @@ class KeyValueStore(Protocol):
     def iter(self) -> AsyncIterator[FileInfo]: ...
     async def list(self, limit: int = 10) -> list[FileInfo]: ...
     async def exists(self, key: str) -> bool: ...
+    async def delete(self, key: str) -> None: ...
+    async def cp(self, src: str, dst: str) -> None: ...
+    async def mv(self, src: str, dst: str) -> None: ...
 
 
 async def _take(entries: AsyncIterator[FileInfo], limit: int) -> list[FileInfo]:
@@ -44,6 +49,37 @@ async def _take(entries: AsyncIterator[FileInfo], limit: int) -> list[FileInfo]:
         if len(out) >= limit:
             break
     return out
+
+
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    """同じディレクトリの一時ファイルへ書いてから `os.replace` で原子的に差し替える。
+
+    途中失敗で `path` が壊れない（all-or-nothing）。一時ファイルは同一ディレクトリに作るので
+    rename は同一ファイルシステム内＝アトミック。失敗時は一時ファイルを掃除する。
+    """
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f"{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
+async def _kv_copy(store: KeyValueStore, src: str, dst: str) -> None:
+    """get→put で src を dst へコピーする汎用実装（src が無ければ FileNotFoundError）。"""
+    data = await store.get(src)
+    if data is None:
+        raise FileNotFoundError(src)
+    await store.put(dst, data)
+
+
+async def _kv_move(store: KeyValueStore, src: str, dst: str) -> None:
+    """copy→delete で src を dst へ移動する汎用実装（原子的ではない）。"""
+    await _kv_copy(store, src, dst)
+    await store.delete(src)
 
 
 # ── Local filesystem ──
@@ -61,7 +97,8 @@ class LocalKeyValueStore:
         # フラットキー規約＝任意の '/' を含むキーをそのまま置けるのに合わせる）。
         path = self._dir / key
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(value)
+        # temp+rename で原子的に書く（途中失敗で既存値が壊れない＝all-or-nothing）。
+        _atomic_write_bytes(path, value)
 
     async def get(self, key: str) -> bytes | None:
         path = self._dir / key
@@ -85,6 +122,35 @@ class LocalKeyValueStore:
 
     async def exists(self, key: str) -> bool:
         return (self._dir / key).is_file()
+
+    async def delete(self, key: str) -> None:
+        # ファイルだけ消す（空になった親ディレクトリは残す）。無いキーは無視。
+        path = self._dir / key
+        if path.is_file():
+            path.unlink()
+
+    async def vacuum(self) -> None:
+        """空ディレクトリを再帰的に削除する（root 自身は残す）。delete とは別の保守操作。
+
+        ローカルファイルシステム特有の掃除（s3/nats はフラットで空ディレクトリ概念が無い）。
+        bottom-up に走査するので、ネストした空ディレクトリもまとめて畳む。
+        """
+        for dirpath, _dirnames, _filenames in os.walk(self._dir, topdown=False):
+            p = Path(dirpath)
+            if p != self._dir and not any(p.iterdir()):
+                with contextlib.suppress(OSError):
+                    p.rmdir()
+
+    async def cp(self, src: str, dst: str) -> None:
+        await _kv_copy(self, src, dst)  # get→put（put は原子的・親ディレクトリ作成）
+
+    async def mv(self, src: str, dst: str) -> None:
+        src_path = self._dir / src
+        if not src_path.is_file():
+            raise FileNotFoundError(src)
+        dst_path = self._dir / dst
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(src_path, dst_path)  # 同一 FS 内の原子的 rename
 
 
 # ── S3-compatible ──
@@ -154,6 +220,22 @@ class S3KeyValueStore(_S3Base):
             except Exception:
                 return False
 
+    async def delete(self, key: str) -> None:
+        async with self._session() as client:
+            await client.delete_object(Bucket=self._bucket, Key=key)
+
+    async def cp(self, src: str, dst: str) -> None:
+        async with self._session() as client:
+            await client.copy_object(
+                Bucket=self._bucket,
+                Key=dst,
+                CopySource={"Bucket": self._bucket, "Key": src},
+            )
+
+    async def mv(self, src: str, dst: str) -> None:
+        await self.cp(src, dst)  # S3 にネイティブの move は無い
+        await self.delete(src)
+
 
 # ── NATS JetStream Object Store ──
 
@@ -215,6 +297,17 @@ class NatsObjectKeyValueStore(_NatsBase):
             return not info.deleted
         except Exception:
             return False
+
+    async def delete(self, key: str) -> None:
+        obs = await self._get_obs()
+        with contextlib.suppress(Exception):
+            await obs.delete(key)
+
+    async def cp(self, src: str, dst: str) -> None:
+        await _kv_copy(self, src, dst)
+
+    async def mv(self, src: str, dst: str) -> None:
+        await _kv_move(self, src, dst)
 
 
 # ── Factory ──
@@ -293,8 +386,53 @@ class LocalFileObject:
         self._fh.close()
 
 
+class _LocalAtomicWriter:
+    """一時ファイルへ書き、close（正常終了）でのみ `os.replace` で確定する書き込み [FileObject]。
+
+    全部書けてから差し替えるので all-or-nothing（途中失敗・例外では確定せず一時ファイルを破棄）。
+    """
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f"{path.name}.", suffix=".tmp")
+        self._tmp = tmp
+        self._fh = os.fdopen(fd, "wb")
+        self._done = False
+
+    async def read(self, size: int = -1) -> bytes:
+        raise io.UnsupportedOperation("not readable")
+
+    async def write(self, data: bytes) -> int:
+        return self._fh.write(data)
+
+    async def close(self) -> None:
+        if self._done:
+            return
+        self._done = True
+        self._fh.close()
+        os.replace(self._tmp, self._path)  # ここで初めて確定（原子的差し替え）
+
+    async def _abort(self) -> None:
+        if self._done:
+            return
+        self._done = True
+        self._fh.close()
+        with contextlib.suppress(OSError):
+            os.unlink(self._tmp)
+
+    async def __aenter__(self) -> _LocalAtomicWriter:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        if exc and exc[0] is not None:
+            await self._abort()  # 例外時は確定しない
+        else:
+            await self.close()
+
+
 class LocalFileStore:
-    """`open` でファイルオブジェクトを返すローカル実装（[FileStore]）。"""
+    """`open` でファイルオブジェクトを返すローカル実装（[FileStore]）。書き込みは原子的。"""
 
     def __init__(self, directory: Path) -> None:
         # KVS と同様、初期化時に絶対パスへ固定する（実行中の cd で挙動を変えない）。
@@ -303,10 +441,11 @@ class LocalFileStore:
 
     async def open(self, filename: str, mode: str = "rb") -> FileObject:
         path = self._dir / filename
-        # 書き込み系モードなら親ディレクトリを作る（KVS の put と同じ規約）。
-        if any(c in mode for c in "wax+"):
-            path.parent.mkdir(parents=True, exist_ok=True)
-        return LocalFileObject(path.open(mode))
+        if "r" in mode:
+            return LocalFileObject(path.open(mode))
+        if "w" in mode:
+            return _LocalAtomicWriter(path)  # temp+rename で all-or-nothing
+        raise ValueError(f"unsupported mode for LocalFileStore: {mode!r}")
 
 
 # ── KeyValueStore を FileStore として被せるアダプタ ──
