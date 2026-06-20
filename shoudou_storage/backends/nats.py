@@ -1,14 +1,13 @@
-"""nats backend — NATS JetStream Object Store（KVS / ストリーミング FileStore）。
+"""nats backend — NATS JetStream Object Store（KVS / FileStore）。
 
-nats-py はメソッド内で遅延 import する。read はチャンク逐次配送、write は close で put。
+nats-py はメソッド内で遅延 import する。FileStore は read=全体取得 / write=close で put。
 """
 
-import asyncio
 import contextlib
 import io
 from collections.abc import AsyncIterator
 
-from ..async_storage import FileInfo, FileObject, _kv_copy, _kv_move, _take
+from ..async_storage import FileInfo, FileObject, _kv_copy, _kv_move, _KvReadFileObject, _take
 
 
 class _NatsBase:
@@ -74,7 +73,7 @@ class NatsObjectKeyValueStore(_NatsBase):
     async def exists(self, key: str) -> bool:
         obs = await self._get_obs()
         try:
-            info = await obs.info(key)
+            info = await obs.get_info(key)  # ObjectStore に info は無い。get_info が正
             return not info.deleted
         except Exception:
             return False
@@ -91,76 +90,14 @@ class NatsObjectKeyValueStore(_NatsBase):
         await _kv_move(self, src, dst)
 
 
-# ── ストリーミング FileStore ──
-
-
-class _QueueSink:
-    """NATS の `get(writeinto=...)` が呼ぶ sync な write 先。チャンクを Queue へ流す。"""
-
-    def __init__(self, queue: asyncio.Queue) -> None:
-        self._queue = queue
-
-    def write(self, chunk: bytes) -> int:
-        # get コルーチンと同じループ上から同期的に呼ばれる（put_nowait は同期で安全）。
-        self._queue.put_nowait(bytes(chunk))
-        return len(chunk)
-
-
-class _NatsStreamReader:
-    """背景の `get(writeinto=sink)` が Queue へ流すチャンクを read で逐次引く読み取り側。"""
-
-    _EOF = None
-
-    def __init__(self, queue: asyncio.Queue, task: asyncio.Future) -> None:
-        self._queue = queue
-        self._task = task
-        self._leftover = b""
-        self._eof = False
-
-    async def _pull(self) -> bool:
-        """次のチャンクを Queue から取り込む。EOF なら False。"""
-        if self._eof:
-            return False
-        chunk = await self._queue.get()
-        if chunk is self._EOF:
-            self._eof = True
-            return False
-        self._leftover += chunk
-        return True
-
-    async def read(self, size: int = -1) -> bytes:
-        if size is None or size < 0:
-            while await self._pull():
-                pass
-            out, self._leftover = self._leftover, b""
-            return out
-        while len(self._leftover) < size and await self._pull():
-            pass
-        out, self._leftover = self._leftover[:size], self._leftover[size:]
-        return out
-
-    async def write(self, data: bytes) -> int:
-        raise io.UnsupportedOperation("not writable")
-
-    async def close(self) -> None:
-        if not self._task.done():
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
-
-    async def __aenter__(self) -> _NatsStreamReader:
-        return self
-
-    async def __aexit__(self, *exc: object) -> None:
-        await self.close()
+# ── FileStore（read=全体取得 / write=close で put） ──
 
 
 class _NatsBufferedWriter:
     """書き込みをバッファし、close 時に `put` する書き込み [FileObject]。
 
-    nats-py の put は readable から sync 読みするため、async の write を pull させるには
-    スレッド/パイプが要る。単一ループでは破綻するので、ここではバッファして close で put する
-    （nats が wire 上でチャンク化して送る）。
+    nats-py の put は bytes/readable を受けて wire 上でチャンク化して送る。async の write を
+    そのまま流し込めないので、ここではメモリにバッファして close で一括 put する。
     """
 
     def __init__(self, base: _NatsBase, name: str) -> None:
@@ -191,25 +128,22 @@ class _NatsBufferedWriter:
 
 
 class NatsFileStore(_NatsBase):
-    """NATS object store の [FileStore]（read=チャンク逐次配送 / write=close で put）。
+    """NATS object store の [FileStore]（read=全体取得 / write=close で put）。
 
-    read は `get(writeinto=sink)` を背景タスクで走らせ、チャンクを逐次 read で引く（最初の
-    バイトまでのレイテンシが低い）。nats writeinto は sync ＝ backpressure を掛けられないため、
-    メモリは厳密には bounded でない（best-effort）。write は単一ループの制約上バッファして put。
+    read は `obs.get(name)` で全体を受け取り（nats-py 自身がチャンクを集約する）バッファから
+    返す。`get(writeinto=...)` による逐次配送は nats-py が writeinto.write を executor スレッドで
+    呼ぶ仕様で、asyncio.Queue 等への受け渡しがスレッド安全でないため採用しない（真の bounded
+    ストリーミングはスレッド安全な受け渡しが要るので deferred）。write はバッファして close で put。
     """
 
     async def open(self, filename: str, mode: str = "rb") -> FileObject:
         if "r" in mode:
-            queue: asyncio.Queue = asyncio.Queue()
-            task = asyncio.ensure_future(self._pump(filename, queue))
-            return _NatsStreamReader(queue, task)
+            obs = await self._get_obs()
+            try:
+                result = await obs.get(filename)
+            except Exception as e:
+                raise FileNotFoundError(filename) from e
+            return _KvReadFileObject(result.data or b"")
         if "w" in mode:
             return _NatsBufferedWriter(self, filename)
         raise ValueError(f"unsupported mode for NatsFileStore: {mode!r}")
-
-    async def _pump(self, name: str, queue: asyncio.Queue) -> None:
-        obs = await self._get_obs()
-        try:
-            await obs.get(name, writeinto=_QueueSink(queue))
-        finally:
-            queue.put_nowait(None)  # EOF sentinel

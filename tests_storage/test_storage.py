@@ -20,6 +20,7 @@ from shoudou_storage import (
     LocalFileStore,
     LocalKeyValueStore,
     NatsFileStore,
+    NatsObjectKeyValueStore,
     S3FileStore,
     SafeFileStore,
     SafeKeyValueStore,
@@ -331,33 +332,58 @@ def test_s3_file_store_streams_multipart_write_and_read() -> None:
     asyncio.run(scenario())
 
 
-# ── NATS streaming file store（fake object store でチャンク配送を検証） ──
+# ── NATS backend（fake object store。実 nats-py の API 形に合わせる） ──
+
+
+class _FakeObjResult:
+    def __init__(self, data: bytes) -> None:
+        self.data = data
+
+
+class _FakeObjInfo:
+    def __init__(self, name: str, size: int, deleted: bool = False) -> None:
+        self.name = name
+        self.size = size
+        self.deleted = deleted
 
 
 class _FakeNatsObs:
-    """NatsFileStore を駆動する最小の fake object store（get は writeinto へチャンク write）。"""
+    """最小の fake object store（nats-py の get/get_info/put/delete/list に合わせる）。"""
 
     def __init__(self) -> None:
         self.objects: dict[str, bytes] = {}
 
-    async def put(self, name: str, data) -> None:
+    async def put(self, name: str, data, meta=None) -> None:
         self.objects[name] = bytes(data)
 
-    async def get(self, name: str, writeinto) -> None:
-        data = self.objects[name]
-        # 4 バイトずつ writeinto.write へ（nats のチャンク配送を模倣）。
-        for i in range(0, len(data), 4):
-            writeinto.write(data[i : i + 4])
+    async def get(self, name: str, writeinto=None, show_deleted=False) -> _FakeObjResult:
+        if name not in self.objects:
+            raise KeyError(name)  # ObjectNotFound 相当
+        return _FakeObjResult(self.objects[name])
+
+    async def get_info(self, name: str, show_deleted=False) -> _FakeObjInfo:
+        if name not in self.objects:
+            raise KeyError(name)
+        return _FakeObjInfo(name, len(self.objects[name]))
+
+    async def delete(self, name: str) -> None:
+        self.objects.pop(name, None)
+
+    async def list(self, ignore_deletes=False) -> list[_FakeObjInfo]:
+        return [_FakeObjInfo(n, len(v)) for n, v in self.objects.items()]
 
 
-def test_nats_file_store_streams_read_and_buffers_write() -> None:
-    store = NatsFileStore("nats://x", "bucket")
-    fake = _FakeNatsObs()
-
+def _patch_obs(store, fake: _FakeNatsObs) -> None:
     async def fake_get_obs() -> _FakeNatsObs:
         return fake
 
-    store._get_obs = fake_get_obs  # 接続を fake に差し替え
+    store._get_obs = fake_get_obs
+
+
+def test_nats_file_store_buffered_read_write() -> None:
+    store = NatsFileStore("nats://x", "bucket")
+    fake = _FakeNatsObs()
+    _patch_obs(store, fake)
 
     async def scenario() -> None:
         # write はバッファして close で put。
@@ -366,12 +392,30 @@ def test_nats_file_store_streams_read_and_buffers_write() -> None:
             await f.write(b" world")
         assert fake.objects["k"] == b"hello world"
 
-        # read は背景 get がチャンクを Queue へ流し、逐次引く（全体／chunk）。
+        # read は全体取得してバッファから返す（全体／chunk）。
         async with await store.open("k", "rb") as f:
             assert await f.read() == b"hello world"
         async with await store.open("k", "rb") as f:
             assert await f.read(5) == b"hello"
             assert await f.read() == b" world"
+
+        # 無いキーは FileNotFoundError。
+        with pytest.raises(FileNotFoundError):
+            await store.open("missing", "rb")
+
+    asyncio.run(scenario())
+
+
+def test_nats_kvs_exists_uses_get_info() -> None:
+    # exists は get_info を使う（ObjectStore に info は無い）。
+    store = NatsObjectKeyValueStore("nats://x", "bucket")
+    fake = _FakeNatsObs()
+    _patch_obs(store, fake)
+
+    async def scenario() -> None:
+        assert await store.exists("k") is False
+        await store.put("k", b"v")
+        assert await store.exists("k") is True
 
     asyncio.run(scenario())
 

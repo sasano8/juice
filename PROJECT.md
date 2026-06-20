@@ -286,6 +286,17 @@ Makefile にはサンプル（`mcp_weather-bot`）の **デプロイフロー** 
 
 ### 直前の作業（Just Done） — 最終更新: 2026-06-20
 
+- **NATS backend のバグを実 nats-py の API で検証して修正（introspect 駆動）。** ユーザーの「nats は async 対応？」
+  という問いから実物を introspect し、2 つの実害を発見・修正した。
+  - **`exists` のバグ:** `ObjectStore` に `info` は無い（正は `get_info`）。`obs.info(key)` が AttributeError →
+    `except` で握りつぶし**常に False**だった。→ `get_info` に修正＋回帰テスト追加。
+  - **`NatsFileStore` のストリーミング読みが破綻:** nats-py の `get(writeinto=...)` は `writeinto.write` を
+    `run_in_executor`（別スレッド）で呼ぶ。`_QueueSink` の `asyncio.Queue.put_nowait` は**スレッド非安全**。→
+    **バッファ読み（`obs.get(name).data`）に変更**し、非安全な機構（`_QueueSink`/`_NatsStreamReader`/`_pump`）を撤去。
+    真の bounded ストリーミングはスレッド安全な受け渡しが要るため deferred。
+  - テスト fake を実 nats-py の形（get/get_info/put/delete/list）に更新。`pytest tests_storage/ -W error` 緑（41）、`make check` 緑（221）。
+  - **関連 commit:** 本コミット（NATS exists/FileStore 修正）。
+
 - **storage を backend サブパッケージへ分離＋`__future__` 撤去＋ツールチェーンを 3.14 統一。**
   - **backends 分離:** `async_storage.py` は抽象（[KeyValueStore]/[FileStore] Protocol）＋共通ヘルパ
     （`_take`/`_atomic_write_bytes`/`_kv_copy`/`_kv_move`）＋汎用アダプタ [KeyValueFileStore] のみに。
