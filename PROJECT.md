@@ -286,6 +286,17 @@ Makefile にはサンプル（`mcp_weather-bot`）の **デプロイフロー** 
 
 ### 直前の作業（Just Done） — 最終更新: 2026-06-20
 
+- **storage を backend サブパッケージへ分離＋`__future__` 撤去＋ツールチェーンを 3.14 統一。**
+  - **backends 分離:** `async_storage.py` は抽象（[KeyValueStore]/[FileStore] Protocol）＋共通ヘルパ
+    （`_take`/`_atomic_write_bytes`/`_kv_copy`/`_kv_move`）＋汎用アダプタ [KeyValueFileStore] のみに。
+    backend 実装は **`backends/`**（`local.py`/`s3.py`/`nats.py`＋`__init__` の `create_key_value_store`）へ移動。
+    公開 API（top-level）は不変＝後方互換。
+  - **`from __future__ import annotations` 全削除**（PEP 649＝3.14 のデフォルト遅延評価に依拠）。
+  - **ツールチェーン 3.14 統一:** ruff `target-version` py310→**py314**、`requires-python` >=3.10→**>=3.14**。
+    ruff の UP037 で forward-ref のクォートが外れ bare 化（＝3.14 専用。3.10–3.13 では NameError）。`.python-version`=3.14・CI も 3.14 なので実態に整合。
+  - **結果:** juice `make check` 緑（221）、`pytest tests_storage/ -W error` 緑（40）、`uv.lock` 更新。
+  - **関連 commit:** 本コミット（backends 分離＋3.14 統一）。
+
 - **storage の `SafeKeyValueStore` を「唯一の KVS wrapper」に統合（パス検証＋download/キャッシュ）。**
   ユーザー方針「ラッパは 1 枚・差し替えるのは backend だけ（ネストは性能低下＋利用者ごとに挙動が割れる）」。
   - **download/キャッシュ**（PyTorch のモデル DL 様）を `SafeKeyValueStore` に吸収＝`download(key, *, force) -> Path`＋

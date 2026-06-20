@@ -70,7 +70,7 @@ class AsyncToSyncKeyValueStore:
             finally:
                 self._loop.close()
 
-    def __enter__(self) -> "AsyncToSyncKeyValueStore":
+    def __enter__(self) -> AsyncToSyncKeyValueStore:
         return self
 
     def __exit__(self, *exc: object) -> None:

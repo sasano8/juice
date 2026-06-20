@@ -13,14 +13,13 @@
   先へ進む（以降の lazy 接続・再試行に委ねる）。
 """
 
-from __future__ import annotations
-
 import asyncio
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
-from .async_storage import KeyValueStore, create_key_value_store
+from .async_storage import KeyValueStore
+from .backends import create_key_value_store
 
 
 @dataclass(frozen=True)

@@ -6,8 +6,6 @@
 （差し替えるのは backend だけ＝ネストによる性能低下と、利用者ごとの挙動差を避ける）。
 """
 
-from __future__ import annotations
-
 from collections.abc import AsyncIterator
 from pathlib import Path
 

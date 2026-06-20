@@ -6,7 +6,8 @@
 - [FileStore]     … `open` でファイルオブジェクト（[FileObject]）を取得するストリーム指向の抽象。
 
 モジュール:
-- [async_storage]         … 一次実装。非同期 [KeyValueStore]＋backends と [FileStore] IF。
+- [async_storage]         … ストア抽象（[KeyValueStore] / [FileStore]）＋共通ヘルパ＋汎用アダプタ。
+- [backends]              … backend 毎の具体実装（Local / S3 / NATS）とファクトリ。
 - [sync_storage]          … 同期インターフェイス（[SyncKeyValueStore] / [SyncFileStore]）。
 - [async_to_sync_storage] … 非同期を同期として被せるブリッジ（[AsyncToSyncKeyValueStore]）。
 
@@ -20,6 +21,9 @@ from .async_storage import (
     FileStore,
     KeyValueFileStore,
     KeyValueStore,
+)
+from .async_to_sync_storage import AsyncToSyncKeyValueStore
+from .backends import (
     LocalFileObject,
     LocalFileStore,
     LocalKeyValueStore,
@@ -29,7 +33,6 @@ from .async_storage import (
     S3KeyValueStore,
     create_key_value_store,
 )
-from .async_to_sync_storage import AsyncToSyncKeyValueStore
 from .connect import ConnectPolicy, connect_key_value_store, connecting
 from .safe_path import (
     DEFAULT_CACHE_DIR,
