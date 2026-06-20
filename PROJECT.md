@@ -286,6 +286,16 @@ Makefile にはサンプル（`mcp_weather-bot`）の **デプロイフロー** 
 
 ### 直前の作業（Just Done） — 最終更新: 2026-06-20
 
+- **storage の `SafeKeyValueStore` を「唯一の KVS wrapper」に統合（パス検証＋download/キャッシュ）。**
+  ユーザー方針「ラッパは 1 枚・差し替えるのは backend だけ（ネストは性能低下＋利用者ごとに挙動が割れる）」。
+  - **download/キャッシュ**（PyTorch のモデル DL 様）を `SafeKeyValueStore` に吸収＝`download(key, *, force) -> Path`＋
+    `cache_dir`。当初は別クラス `DownloadCache`（`download.py`）で実装したが、**1 枚ラッパー方針で統合し download.py は廃止**。
+  - キャッシュ先は常にローカル FS・sync。`cache_dir` は init で絶対パス固定（cd 非依存。既定 `~/.cache/shoudou_storage`）。
+    キャッシュ済み判定は存在ベース（上流更新の自動無効化は KVS に per-key メタデータが無いため未対応＝リモート backend 向け）。
+  - キー検証は既存の `validate_safe_path` を流用（キャッシュ先の path traversal を防止）。`SafeFileStore` は従来どおり（download なし）。
+  - **結果:** `pytest tests_storage/ -W error` 緑（40）、juice `make check` 緑（221）。
+  - **関連 commit:** 本コミット（SafeKeyValueStore に download 統合）。
+
 - **storage に接続ライフサイクル（connect/aclose ＋ `connecting` ＋ `ConnectPolicy`）を追加。**
   「init では接続せず `async with` で接続」「接続確認するか無視するか」「リトライ/timeout/deadline」をユーザー対話で設計。
   - **connect/aclose**（Protocol＋全 backend＋Safe＋sync bridge）：Local=dir 用意の体裁／S3=`head_bucket` 到達確認／

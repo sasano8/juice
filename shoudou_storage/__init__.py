@@ -31,7 +31,13 @@ from .async_storage import (
 )
 from .async_to_sync_storage import AsyncToSyncKeyValueStore
 from .connect import ConnectPolicy, connect_key_value_store, connecting
-from .safe_path import SafeFileStore, SafeKeyValueStore, UnsafePathError, validate_safe_path
+from .safe_path import (
+    DEFAULT_CACHE_DIR,
+    SafeFileStore,
+    SafeKeyValueStore,
+    UnsafePathError,
+    validate_safe_path,
+)
 from .sync_storage import SyncFileObject, SyncFileStore, SyncKeyValueStore
 
 __all__ = [
@@ -54,6 +60,7 @@ __all__ = [
     "UnsafePathError",
     "SafeKeyValueStore",
     "SafeFileStore",
+    "DEFAULT_CACHE_DIR",
     # file store (open -> file object)
     "FileStore",
     "FileObject",

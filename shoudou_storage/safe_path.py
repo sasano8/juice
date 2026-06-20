@@ -1,15 +1,20 @@
-"""safe path — ストアのキー/パスに不正（パストラバーサル等）が無いか検証するラッパ。
+"""safe path — backend を包む単一のラッパ層（パス検証＋ダウンロード/キャッシュ）。
 
 [validate_safe_path] が POSIX 相対パスのみを許し、絶対パス・`..`・バックスラッシュ・NUL を弾く。
-[SafeKeyValueStore] は [KeyValueStore] と同じインターフェイスを被せ、キーを検証してから委譲する
-（path を覗いて検証するため各メソッドを明示的に書く＝型情報もそのまま引き継がれる）。
+[SafeKeyValueStore] は backend（[KeyValueStore]）を 1 枚だけ包む**唯一の wrapper**で、キー検証して
+委譲しつつ、`download` でローカルキャッシュへ取得する機能も持つ。**ラッパは入れ子にしない**
+（差し替えるのは backend だけ＝ネストによる性能低下と、利用者ごとの挙動差を避ける）。
 """
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from pathlib import Path
 
-from .async_storage import FileInfo, FileObject, FileStore, KeyValueStore
+from .async_storage import FileInfo, FileObject, FileStore, KeyValueStore, _atomic_write_bytes
+
+# ダウンロードキャッシュのデフォルト先（ホーム配下）。
+DEFAULT_CACHE_DIR = Path.home() / ".cache" / "shoudou_storage"
 
 
 class UnsafePathError(ValueError):
@@ -36,10 +41,17 @@ def validate_safe_path(path: str) -> str:
 
 
 class SafeKeyValueStore:
-    """キーを [validate_safe_path] で検証してから委譲する [KeyValueStore] ラッパ。"""
+    """backend を 1 枚だけ包む唯一の wrapper。キー検証＋委譲に加え `download`（キャッシュ）も持つ。
 
-    def __init__(self, store: KeyValueStore) -> None:
+    キーは [validate_safe_path] で検証してから委譲する（path を覗いて検証するため各メソッドを
+    明示的に書く＝型情報もそのまま引き継がれる）。`download` はローカルのキャッシュ先へ取得する
+    （キャッシュは常にローカル FS・sync。cache_dir は init で絶対パスへ固定＝cd 非依存）。
+    """
+
+    def __init__(self, store: KeyValueStore, cache_dir: Path | str | None = None) -> None:
         self._store = store
+        base = Path(cache_dir).expanduser() if cache_dir is not None else DEFAULT_CACHE_DIR
+        self._cache_dir = base.resolve()  # cwd が変わってもヒットさせるため固定
 
     async def put(self, key: str, value: bytes) -> None:
         await self._store.put(validate_safe_path(key), value)
@@ -70,6 +82,28 @@ class SafeKeyValueStore:
 
     async def aclose(self) -> None:
         await self._store.aclose()
+
+    @property
+    def cache_dir(self) -> Path:
+        return self._cache_dir
+
+    async def download(self, key: str, *, force: bool = False) -> Path:
+        """`key` の値をローカルキャッシュへ取得してパスを返す（PyTorch のモデル DL 様）。
+
+        既にキャッシュ済み（ローカルにファイルが在る）なら再取得しない。`force=True` で取り直す。
+        キャッシュ済み判定は存在ベース。上流更新の自動無効化には上流メタデータが要るが現状 KVS は
+        per-key メタデータを持たない（ローカル backend は上流＝ローカルで検証メタデータも無い）。
+        """
+        safe = validate_safe_path(key)
+        dst = self._cache_dir / safe
+        if dst.is_file() and not force:
+            return dst  # cache hit（存在ベース）
+        data = await self._store.get(key)
+        if data is None:
+            raise FileNotFoundError(key)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_write_bytes(dst, data)  # 原子的に書く
+        return dst
 
 
 class SafeFileStore:

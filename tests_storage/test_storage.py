@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from shoudou_storage import (
+    DEFAULT_CACHE_DIR,
     AsyncToSyncKeyValueStore,
     ConnectPolicy,
     KeyValueFileStore,
@@ -560,3 +561,55 @@ def test_retry_verify_false_ignores_after_exhaustion() -> None:
 
     asyncio.run(scenario())
     assert flaky.attempts == 2
+
+
+# ── download cache（KeyValueStore → ローカルキャッシュ） ──
+
+
+def test_download_cache_fetches_caches_and_force(tmp_path: Path) -> None:
+    upstream = LocalKeyValueStore(tmp_path / "remote")  # 上流ストア（リモート相当）
+    cache = SafeKeyValueStore(upstream, cache_dir=tmp_path / "cache")
+
+    async def scenario() -> None:
+        await upstream.put("m/model.bin", b"weights")
+        p = await cache.download("m/model.bin")
+        assert p == tmp_path / "cache" / "m" / "model.bin"
+        assert p.read_bytes() == b"weights"
+
+        # 上流を変えてもキャッシュ済みなら再取得しない（存在ベース）。
+        await upstream.put("m/model.bin", b"CHANGED")
+        assert (await cache.download("m/model.bin")).read_bytes() == b"weights"
+        # force=True で取り直す。
+        assert (await cache.download("m/model.bin", force=True)).read_bytes() == b"CHANGED"
+
+        # 上流に無ければ FileNotFoundError。
+        with pytest.raises(FileNotFoundError):
+            await cache.download("missing")
+
+    asyncio.run(scenario())
+
+
+def test_download_cache_rejects_unsafe_key(tmp_path: Path) -> None:
+    cache = SafeKeyValueStore(LocalKeyValueStore(tmp_path / "r"), cache_dir=tmp_path / "c")
+
+    async def scenario() -> None:
+        with pytest.raises(UnsafePathError):
+            await cache.download("../evil")  # キャッシュ外へ書かせない
+
+    asyncio.run(scenario())
+
+
+def test_download_cache_default_dir_under_home(tmp_path: Path) -> None:
+    cache = SafeKeyValueStore(LocalKeyValueStore(tmp_path))  # cache_dir 省略
+    assert cache.cache_dir == DEFAULT_CACHE_DIR.resolve()
+    assert str(cache.cache_dir).startswith(str(Path.home().resolve()))
+
+
+def test_download_cache_dir_fixed_absolute_at_init(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    # 相対 cache_dir でも init 時の cwd を基準に絶対パスへ固定する（cd 非依存）。
+    cache = SafeKeyValueStore(LocalKeyValueStore(tmp_path / "r"), cache_dir="mycache")
+    assert cache.cache_dir.is_absolute()
+    assert cache.cache_dir == (tmp_path / "mycache").resolve()
