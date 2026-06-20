@@ -30,6 +30,7 @@ from .async_storage import (
     create_key_value_store,
 )
 from .async_to_sync_storage import AsyncToSyncKeyValueStore
+from .connect import ConnectPolicy, connect_key_value_store, connecting
 from .safe_path import SafeFileStore, SafeKeyValueStore, UnsafePathError, validate_safe_path
 from .sync_storage import SyncFileObject, SyncFileStore, SyncKeyValueStore
 
@@ -44,6 +45,10 @@ __all__ = [
     "create_key_value_store",
     "SyncKeyValueStore",
     "AsyncToSyncKeyValueStore",
+    # connection lifecycle
+    "ConnectPolicy",
+    "connecting",
+    "connect_key_value_store",
     # safe path (validation wrapper)
     "validate_safe_path",
     "UnsafePathError",

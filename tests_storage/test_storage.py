@@ -16,6 +16,7 @@ import pytest
 
 from shoudou_storage import (
     AsyncToSyncKeyValueStore,
+    ConnectPolicy,
     KeyValueFileStore,
     LocalFileStore,
     LocalKeyValueStore,
@@ -24,6 +25,8 @@ from shoudou_storage import (
     SafeFileStore,
     SafeKeyValueStore,
     UnsafePathError,
+    connect_key_value_store,
+    connecting,
     validate_safe_path,
 )
 
@@ -372,3 +375,188 @@ def test_nats_file_store_streams_read_and_buffers_write() -> None:
             assert await f.read() == b" world"
 
     asyncio.run(scenario())
+
+
+# ── connection lifecycle（接続前 factory 包み → async with で接続） ──
+
+
+def test_connect_key_value_store_local_roundtrip(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        # init では接続せず、async with で connect してから使う。
+        async with connect_key_value_store("local", local_dir=tmp_path) as store:
+            await store.put("k", b"v")
+            assert await store.get("k") == b"v"
+
+    asyncio.run(scenario())
+
+
+def test_local_kvs_connect_aclose_lifecycle(tmp_path: Path) -> None:
+    store = LocalKeyValueStore(tmp_path)
+
+    async def scenario() -> None:
+        await store.connect()  # ローカルは体裁上のステップ（dir を用意するだけ）
+        await store.put("k", b"v")
+        await store.aclose()
+
+    asyncio.run(scenario())
+
+
+class _BadConnectStore:
+    """connect が必ず失敗するストア（verify の挙動確認用）。"""
+
+    def __init__(self) -> None:
+        self.aclosed = False
+
+    async def connect(self) -> None:
+        raise ConnectionError("boom")
+
+    async def aclose(self) -> None:
+        self.aclosed = True
+
+
+def test_connect_policy_presets() -> None:
+    assert ConnectPolicy.default() == ConnectPolicy()  # 既定と一致
+    ff = ConnectPolicy.fail_fast()
+    assert ff.max_retry == 0 and ff.timeout == 5.0 and ff.deadline == 5.0
+    fv = ConnectPolicy.forever()
+    # 無期限に粘る: deadline 無し・無制限リトライ・per-attempt timeout は有限。
+    assert fv.max_retry == float("inf") and fv.deadline is None and fv.timeout == 10.0
+
+
+# 既定 policy は max_retry=inf（無制限）で deadline まで粘るため、verify の検証は
+# リトライ無し（max_retry=0）で即決させる。
+_NO_RETRY = ConnectPolicy(max_retry=0)
+
+
+def test_connecting_verify_true_raises_and_acloses() -> None:
+    bad = _BadConnectStore()
+
+    async def scenario() -> None:
+        with pytest.raises(ConnectionError):
+            async with connecting(lambda: bad, policy=_NO_RETRY):  # verify=True 既定
+                pass
+
+    asyncio.run(scenario())
+    assert bad.aclosed is True  # 失敗時も後始末される
+
+
+def test_connecting_verify_false_ignores_failure() -> None:
+    bad = _BadConnectStore()
+
+    async def scenario() -> None:
+        # verify=False は初回接続失敗を無視して中へ入れる。
+        async with connecting(lambda: bad, verify=False, policy=_NO_RETRY) as store:
+            assert store is bad
+
+    asyncio.run(scenario())
+
+
+# ── 接続リトライ方針（ConnectPolicy） ──
+
+
+class _FlakyConnectStore:
+    """connect が最初 `fail_times` 回だけ失敗するストア。"""
+
+    def __init__(self, fail_times: int) -> None:
+        self._left = fail_times
+        self.attempts = 0
+        self.aclosed = False
+
+    async def connect(self) -> None:
+        self.attempts += 1
+        if self._left > 0:
+            self._left -= 1
+            raise ConnectionError("flaky")
+
+    async def aclose(self) -> None:
+        self.aclosed = True
+
+
+def test_retry_until_success() -> None:
+    flaky = _FlakyConnectStore(fail_times=2)
+
+    async def scenario() -> None:
+        async with connecting(lambda: flaky, policy=ConnectPolicy(max_retry=2, delay=0)) as s:
+            assert s is flaky
+
+    asyncio.run(scenario())
+    assert flaky.attempts == 3  # 2 回失敗 + 1 回成功（max_retry=2 → 総 3 試行）
+
+
+def test_retry_exhausted_raises() -> None:
+    flaky = _FlakyConnectStore(fail_times=5)
+
+    async def scenario() -> None:
+        with pytest.raises(ConnectionError):
+            async with connecting(lambda: flaky, policy=ConnectPolicy(max_retry=1, delay=0)):
+                pass
+
+    asyncio.run(scenario())
+    assert flaky.attempts == 2  # max_retry=1 → 総 2 試行で打ち切り
+    assert flaky.aclosed is True
+
+
+def test_retry_timeout_per_attempt() -> None:
+    class _HangStore:
+        async def connect(self) -> None:
+            await asyncio.sleep(10)  # 1 回の connect がハング
+
+        async def aclose(self) -> None:
+            return None
+
+    policy = ConnectPolicy(max_retry=0, timeout=0.01)
+
+    async def scenario() -> None:
+        with pytest.raises(TimeoutError):
+            async with connecting(lambda: _HangStore(), policy=policy):
+                pass
+
+    asyncio.run(scenario())
+
+
+def test_retry_deadline_bounds_hung_connect_without_timeout() -> None:
+    class _HangStore:
+        async def connect(self) -> None:
+            await asyncio.sleep(10)  # ハングする connect
+
+        async def aclose(self) -> None:
+            return None
+
+    # timeout=None でも deadline があれば 1 回のハングで無限待機しない。
+    policy = ConnectPolicy(max_retry=0, timeout=None, deadline=0.02)
+
+    async def scenario() -> None:
+        with pytest.raises(TimeoutError):
+            async with connecting(lambda: _HangStore(), policy=policy):
+                pass
+
+    asyncio.run(scenario())
+
+
+def test_retry_deadline_stops_early() -> None:
+    flaky = _FlakyConnectStore(fail_times=100)
+
+    async def scenario() -> None:
+        with pytest.raises(ConnectionError):
+            async with connecting(
+                lambda: flaky,
+                policy=ConnectPolicy(max_retry=float("inf"), delay=0.02, deadline=0.05),
+            ):
+                pass
+
+    asyncio.run(scenario())
+    assert flaky.attempts < 100  # deadline で attempts 到達前に打ち切り
+
+
+def test_retry_verify_false_ignores_after_exhaustion() -> None:
+    flaky = _FlakyConnectStore(fail_times=100)
+
+    async def scenario() -> None:
+        # 粘っても駄目だが verify=False なので無視して中へ。
+        async with connecting(
+            lambda: flaky, verify=False, policy=ConnectPolicy(max_retry=1, delay=0)
+        ) as s:
+            assert s is flaky
+
+    asyncio.run(scenario())
+    assert flaky.attempts == 2

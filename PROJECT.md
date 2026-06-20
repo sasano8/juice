@@ -286,6 +286,21 @@ Makefile にはサンプル（`mcp_weather-bot`）の **デプロイフロー** 
 
 ### 直前の作業（Just Done） — 最終更新: 2026-06-20
 
+- **storage に接続ライフサイクル（connect/aclose ＋ `connecting` ＋ `ConnectPolicy`）を追加。**
+  「init では接続せず `async with` で接続」「接続確認するか無視するか」「リトライ/timeout/deadline」をユーザー対話で設計。
+  - **connect/aclose**（Protocol＋全 backend＋Safe＋sync bridge）：Local=dir 用意の体裁／S3=`head_bucket` 到達確認／
+    NATS=`_get_obs` で確立＋`nc.close`。`_S3Base`/`_NatsBase` に置いたので FileStore（S3/NATS）も同ステップ。
+  - **`connecting(factory, *, verify, policy)`**：実体生成と接続を `__aenter__` まで遅延（factory 包み＝接続前状態）。
+    `verify=True` は接続失敗を送出（fail-fast）／`verify=False` は無視して先へ。**verify は policy と別引数**（ユーザー決定）。
+  - **`ConnectPolicy`**（dataclass・改名前は RetryPolicy）：`max_retry`(=`float("inf")` で無制限・既定 inf)・`timeout`・
+    `delay`・`backoff`・`max_delay`・`deadline`。**1 回の待機は timeout と残り deadline の小さい方で縛る**
+    （`timeout=None` でも deadline があれば 1 回のハングで無限待機しない）。両 None のときだけ無制限。
+    プリセット `default()`/`fail_fast()`/`forever()`（forever=deadline 無しで起動まで無期限・per-attempt timeout は残す）。
+  - **入口** `connect_key_value_store(backend, *, verify, policy, **opts)`。
+  - **結果:** `pytest tests_storage/ -W error` 緑（36）、juice `make check` 緑（221）。
+  - **caveat:** 既定 policy は max_retry=inf＋deadline=60 ＝失敗時 60s 粘るので、即決させたいテストは `fail_fast`/`max_retry=0` を渡す。
+  - **関連 commit:** 本コミット（接続ライフサイクル＋ConnectPolicy）。
+
 - **storage の KeyValueStore に CRUD/保守操作を拡充（delete / cp / mv / vacuum）＋ Local 書き込みを原子的に。**
   - **delete**（Protocol＋全 backend＋Safe＋sync＋bridge）：Local は unlink のみ（**親ディレクトリは残す**＝ユーザー決定）、
     S3=delete_object、NATS=obs.delete。無いキーは無視。

@@ -65,6 +65,12 @@ class SafeKeyValueStore:
     async def mv(self, src: str, dst: str) -> None:
         await self._store.mv(validate_safe_path(src), validate_safe_path(dst))
 
+    async def connect(self) -> None:
+        await self._store.connect()
+
+    async def aclose(self) -> None:
+        await self._store.aclose()
+
 
 class SafeFileStore:
     """filename を [validate_safe_path] で検証してから委譲する [FileStore] ラッパ。"""

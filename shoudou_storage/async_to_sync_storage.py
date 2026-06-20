@@ -57,12 +57,18 @@ class AsyncToSyncKeyValueStore:
     def mv(self, src: str, dst: str) -> None:
         self._run(self._store.mv(src, dst))
 
+    def connect(self) -> None:
+        self._run(self._store.connect())
+
     def close(self) -> None:
-        """保持しているイベントループを閉じる（async ジェネレータを finalize してから）。"""
+        """ラップ先を aclose し、保持しているループを閉じる（async ジェネレータを finalize）。"""
         try:
-            self._loop.run_until_complete(self._loop.shutdown_asyncgens())
+            self._run(self._store.aclose())
         finally:
-            self._loop.close()
+            try:
+                self._loop.run_until_complete(self._loop.shutdown_asyncgens())
+            finally:
+                self._loop.close()
 
     def __enter__(self) -> "AsyncToSyncKeyValueStore":
         return self

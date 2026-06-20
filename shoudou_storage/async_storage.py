@@ -39,6 +39,8 @@ class KeyValueStore(Protocol):
     async def delete(self, key: str) -> None: ...
     async def cp(self, src: str, dst: str) -> None: ...
     async def mv(self, src: str, dst: str) -> None: ...
+    async def connect(self) -> None: ...
+    async def aclose(self) -> None: ...
 
 
 async def _take(entries: AsyncIterator[FileInfo], limit: int) -> list[FileInfo]:
@@ -152,6 +154,13 @@ class LocalKeyValueStore:
         dst_path.parent.mkdir(parents=True, exist_ok=True)
         os.replace(src_path, dst_path)  # 同一 FS 内の原子的 rename
 
+    async def connect(self) -> None:
+        # ローカルは接続不要だが、ライフサイクルのステップを合わせるため dir を確実に用意する。
+        self._dir.mkdir(parents=True, exist_ok=True)
+
+    async def aclose(self) -> None:
+        return None
+
 
 # ── S3-compatible ──
 
@@ -183,6 +192,14 @@ class _S3Base:
             aws_access_key_id=self._access_key,
             aws_secret_access_key=self._secret_key,
         )
+
+    async def connect(self) -> None:
+        # 永続セッションは持たない（毎オペでクライアント生成）。接続確認として bucket 到達を見る。
+        async with self._session() as client:
+            await client.head_bucket(Bucket=self._bucket)
+
+    async def aclose(self) -> None:
+        return None
 
 
 class S3KeyValueStore(_S3Base):
@@ -261,6 +278,16 @@ class _NatsBase:
             except BucketNotFoundError:
                 self._obs = await js.create_object_store(self._bucket)
         return self._obs
+
+    async def connect(self) -> None:
+        # nc 接続＋object store を確立する（以降は使い回す）。
+        await self._get_obs()
+
+    async def aclose(self) -> None:
+        if self._nc is not None:
+            await self._nc.close()
+            self._nc = None
+            self._obs = None
 
 
 class NatsObjectKeyValueStore(_NatsBase):
@@ -446,6 +473,12 @@ class LocalFileStore:
         if "w" in mode:
             return _LocalAtomicWriter(path)  # temp+rename で all-or-nothing
         raise ValueError(f"unsupported mode for LocalFileStore: {mode!r}")
+
+    async def connect(self) -> None:
+        self._dir.mkdir(parents=True, exist_ok=True)
+
+    async def aclose(self) -> None:
+        return None
 
 
 # ── KeyValueStore を FileStore として被せるアダプタ ──
